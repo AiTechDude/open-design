@@ -8814,6 +8814,174 @@ button.connector-action.is-loading {
   border-color: var(--red-border);
 }
 
+/* Right-side comment thread panel. Shown while board (comment) mode
+   is on; takes the place of the chat sidebar's removed Comments tab.
+   Floats over the artifact preview at the right edge. */
+.comment-side-panel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: 320px;
+  max-width: calc(100% - 16px);
+  background: var(--bg-panel, #fff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  z-index: 30;
+  overflow: hidden;
+}
+.comment-side-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.comment-side-empty {
+  padding: 24px 8px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.comment-side-item {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.comment-side-item.selected {
+  background: #fff1ec;
+  border-color: #ff8c75;
+}
+.comment-side-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.comment-side-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.comment-side-author strong {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comment-side-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #0a0a0a;
+  color: #fff;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.comment-side-time {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.comment-side-check {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid var(--border);
+  background: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: #fff;
+  flex-shrink: 0;
+}
+.comment-side-check.checked {
+  background: #ff5a3c;
+  border-color: #ff5a3c;
+}
+.comment-side-body {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.45;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.comment-side-reply {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.comment-side-reply:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.comment-side-selectbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: #fff1ec;
+}
+.comment-side-selectcount {
+  flex: 1;
+  font-size: 12px;
+  color: #cc3a20;
+}
+.comment-side-selectbar .ghost {
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.comment-side-selectbar .ghost:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.comment-side-selectbar .primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #ff5a3c;
+  color: #fff;
+  border: 1px solid #ff5a3c;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.comment-side-selectbar .primary:disabled {
+  background: #ffb9aa;
+  border-color: #ffb9aa;
+  cursor: not-allowed;
+}
+.comment-side-selectbar .primary:hover:not(:disabled) {
+  background: #e94a2d;
+  border-color: #e94a2d;
+}
+
 /* Inspect panel — sibling of the comment popover. Anchored to the
    right side of the preview surface. Width is fixed so layout doesn't
    reflow as the user scrubs slider values; controls reserve space for
