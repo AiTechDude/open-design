@@ -129,7 +129,9 @@ function tagUnresolvedChangesRequested(facts: PrFacts): Tag | null {
   // (COMMENTED does not supersede CR in GitHub's decision logic), or the CR
   // sits outside the `reviews(last: 30)` window. Either way the PR-level
   // decision is the authoritative signal; fall back to it without asserting
-  // a specific cause.
+  // a specific cause. Observed scale on the live queue: 3 of 102 open PRs
+  // (#1101 / #1127 / #1163) hit this gap, so this is a recurring pattern,
+  // not a theoretical edge case.
   if (facts.reviewDecision === "CHANGES_REQUESTED") {
     return {
       name: "unresolved-changes-requested",
