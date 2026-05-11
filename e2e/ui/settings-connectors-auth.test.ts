@@ -400,6 +400,117 @@ test.describe('Settings connectors auth flows', () => {
       .toBe('https://example.com/oauth');
   });
 
+  test('restores a pending authorization after a full page reload', async ({ page }) => {
+    const dialog = await openConnectorsSettings(page, {
+      pendingAuthorization: pendingAuthorizationStorage(),
+    });
+
+    const githubCard = connectorCard(dialog, 'github');
+    await expect(githubCard.getByRole('button', { name: 'Cancel' })).toBeVisible();
+
+    await page.reload();
+    await page.getByTitle('Configure execution mode').click();
+
+    const reloadedDialog = page.getByRole('dialog');
+    await expect(reloadedDialog).toBeVisible();
+    await reloadedDialog.getByRole('button', { name: /^Connectors\b/ }).click();
+
+    const reloadedGithubCard = connectorCard(reloadedDialog, 'github');
+    await expect(reloadedGithubCard.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(reloadedGithubCard.getByRole('button', { name: 'Connect' })).toHaveCount(0);
+    await expect(reloadedGithubCard.getByText(/authorization pending/i)).toBeVisible();
+  });
+
+  test('settles a pending authorization into Disconnect when status polling reports the connector as connected', async ({ page }) => {
+    let statusRequests = 0;
+    const dialog = await openConnectorsSettings(page, {
+      onConnect: () => ({
+        status: 200,
+        body: {
+          connector: CONNECTORS[0],
+          auth: {
+            kind: 'redirect_required',
+            redirectUrl: 'https://example.com/oauth',
+            expiresAt: '2026-05-11T12:00:00.000Z',
+          },
+        },
+      }),
+    });
+
+    await page.unroute('**/api/connectors/status');
+    await page.route('**/api/connectors/status', async (route) => {
+      statusRequests += 1;
+      const githubStatus =
+        statusRequests >= 2
+          ? { status: 'connected', accountLabel: 'octo-user' }
+          : { status: 'available', accountLabel: undefined };
+      await route.fulfill({
+        json: {
+          statuses: {
+            github: githubStatus,
+            slack: { status: 'connected', accountLabel: 'design-team' },
+          },
+        },
+      });
+    });
+
+    const githubCard = connectorCard(dialog, 'github');
+    await githubCard.getByRole('button', { name: 'Connect' }).click();
+    await expect(githubCard.getByRole('button', { name: 'Cancel' })).toBeVisible();
+
+    await expect
+      .poll(async () => statusRequests, { timeout: 5000 })
+      .toBeGreaterThanOrEqual(2);
+    await expect(githubCard.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+    await expect(githubCard.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+    await expect(githubCard.getByText('octo-user')).toBeVisible();
+    await expect
+      .poll(async () =>
+        page.evaluate(() => window.sessionStorage.getItem('od-connectors-authorization-pending')),
+      )
+      .toBe(null);
+  });
+
+  test('returns a pending authorization to Connect and clears session storage after a successful cancel', async ({ page }) => {
+    const dialog = await openConnectorsSettings(page, {
+      onConnect: () => ({
+        status: 200,
+        body: {
+          connector: CONNECTORS[0],
+          auth: {
+            kind: 'redirect_required',
+            redirectUrl: 'https://example.com/oauth',
+            expiresAt: '2026-05-11T12:00:00.000Z',
+          },
+        },
+      }),
+      onCancel: () => ({
+        status: 200,
+        body: {
+          connector: {
+            ...CONNECTORS[0],
+            status: 'available',
+          },
+        },
+      }),
+    });
+
+    const githubCard = connectorCard(dialog, 'github');
+    await githubCard.getByRole('button', { name: 'Connect' }).click();
+    await expect(githubCard.getByRole('button', { name: 'Cancel' })).toBeVisible();
+
+    await githubCard.getByRole('button', { name: 'Cancel' }).click();
+
+    await expect(githubCard.getByRole('button', { name: 'Connect' })).toBeVisible();
+    await expect(githubCard.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+    await expect(githubCard.getByText(/authorization pending/i)).toHaveCount(0);
+    await expect
+      .poll(async () =>
+        page.evaluate(() => window.sessionStorage.getItem('od-connectors-authorization-pending')),
+      )
+      .toBe(null);
+  });
+
   test('restores a pending authorization from session storage after reopening settings', async ({ page }) => {
     const dialog = await openConnectorsSettings(page, {
       pendingAuthorization: pendingAuthorizationStorage(),
