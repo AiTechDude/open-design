@@ -1266,6 +1266,33 @@ console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_messag
     }
   });
 
+  it('returns configured profile guidance for silent Claude exits', async () => {
+    const previous = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = '/tmp/claude-alt';
+    try {
+      await withFakeClaude(
+        `process.exit(1);`,
+        async () => {
+          const result = await testAgentConnection({ agentId: 'claude' });
+
+          expect(result).toMatchObject({
+            ok: false,
+            kind: 'agent_spawn_failed',
+            agentName: 'Claude Code',
+          });
+          expect(result.detail).toContain('configured Claude profile');
+          expect(result.detail).toContain('Effective CLAUDE_CONFIG_DIR: /tmp/claude-alt');
+        },
+      );
+    } finally {
+      if (previous == null) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previous;
+      }
+    }
+  });
+
   it('classifies structured Codex model errors as not_found_model', async () => {
     await withFakeCodex(
       `console.log(JSON.stringify({ type: 'error', message: "The 'dddd' model is not supported when using Codex with a ChatGPT account." }));`,

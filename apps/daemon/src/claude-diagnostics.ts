@@ -131,10 +131,16 @@ export function diagnoseClaudeCliFailure(
     );
   }
 
-  if (!text.trim() && input.exitCode === 1 && !hasConfigDir) {
+  if (!text.trim() && input.exitCode === 1) {
+    const message = hasConfigDir
+      ? 'Claude Code exited before producing diagnostics while using the configured Claude profile.'
+      : 'Claude Code exited before producing diagnostics.';
+    const detail = hasConfigDir
+      ? 'Re-run `claude` and `/login` for that profile, then retry Open Design.'
+      : 'Run `claude`, use `/login`, and retry. If you use multiple Claude profiles, set CLAUDE_CONFIG_DIR in Settings so Open Design uses the same profile as your terminal.';
     return withContext(
-      'Claude Code exited before producing diagnostics.',
-      'Run `claude`, use `/login`, and retry. If you use multiple Claude profiles, set CLAUDE_CONFIG_DIR in Settings so Open Design uses the same profile as your terminal.',
+      message,
+      detail,
       input,
     );
   }

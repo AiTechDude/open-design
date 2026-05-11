@@ -56,6 +56,20 @@ describe('diagnoseClaudeCliFailure', () => {
     expect(diagnostic?.detail).not.toContain('use `/login`');
   });
 
+  it('maps silent configured-profile exits to profile guidance', () => {
+    const diagnostic = diagnoseClaudeCliFailure({
+      agentId: 'claude',
+      exitCode: 1,
+      stderrTail: '',
+      stdoutTail: '',
+      env: { CLAUDE_CONFIG_DIR: '/tmp/claude-alt' },
+    });
+
+    expect(diagnostic?.message).toContain('configured Claude profile');
+    expect(diagnostic?.detail).toContain('Re-run `claude` and `/login` for that profile');
+    expect(diagnostic?.detail).toContain('Effective CLAUDE_CONFIG_DIR: /tmp/claude-alt');
+  });
+
   it('includes configured Claude config directory context', () => {
     const diagnostic = diagnoseClaudeCliFailure({
       agentId: 'claude',
