@@ -9,6 +9,7 @@ import {
   type AnalyticsClientType,
   type AnalyticsConfigResponse,
 } from '@open-design/contracts/analytics';
+import { scrubBeforeSend } from './scrub';
 
 interface AnalyticsContext {
   anonymousId: string;
@@ -54,13 +55,47 @@ export async function getAnalyticsClient(
         // header) land on the same person record. Falls back to the
         // locally-generated UUID for the legacy / pre-consent path.
         bootstrap: { distinctID: distinctId },
-        // Disable session recording and autocapture; this integration is
-        // event-based only. A future spec can opt in selectively.
-        disable_session_recording: true,
-        autocapture: false,
-        capture_pageview: false,
-        capture_pageleave: false,
         persistence: 'localStorage',
+
+        // --- Auto-capture layers --------------------------------------
+        // Anonymous diagnostic features (click paths, page transitions,
+        // web vitals, browser errors). The single Privacy → "Share
+        // usage data" toggle gates ALL of these via posthog-js's global
+        // opt_out_capturing() — see applyConsent() below and
+        // AnalyticsProvider's setConsent wiring in App.tsx.
+        autocapture: true,
+        capture_pageview: 'history_change',
+        capture_pageleave: 'if_capture_pageview',
+        capture_dead_clicks: true,
+        capture_performance: {
+          web_vitals: true,
+          network_timing: true,
+        },
+        capture_exceptions: true,
+
+        // --- Privacy defenses -----------------------------------------
+        // 1. scrub.ts runs on every outgoing event and strips $el_text
+        //    from input/textarea/contenteditable elements, removes
+        //    query strings from URLs, and rewrites absolute filesystem
+        //    paths in exception stack traces. Single audit point — new
+        //    sensitive surfaces extend the rules there, not by
+        //    sprinkling class names through the codebase.
+        // 2. The chat composer textarea keeps a `ph-no-capture` class
+        //    as defense in depth: PostHog won't even generate an event
+        //    for clicks inside that subtree, so a future scrub regression
+        //    can't leak prompt content. Only the most sensitive surface
+        //    (prompt body) gets this treatment; everything else relies
+        //    on scrub.ts.
+        before_send: scrubBeforeSend,
+
+        // --- Explicitly disabled --------------------------------------
+        // Session replay captures the user's entire screen. For a tool
+        // where prompts, generated artifacts, and provider API keys are
+        // all visible in DOM, this needs an extensive mask catalogue
+        // before we can satisfy the CSV's no-prompt-content rule. Off
+        // until a dedicated consent surface ships.
+        disable_session_recording: true,
+
         loaded: (instance) => {
           instance.register({
             event_schema_version: EVENT_SCHEMA_VERSION,
@@ -89,6 +124,11 @@ export async function getAnalyticsClient(
 // reload re-reads /api/analytics/config. The posthog-js client persists
 // its opt-out flag in localStorage; subsequent capture() calls become
 // no-ops until the user opts back in.
+//
+// `opt_out_capturing()` is a global gate — it halts not only explicit
+// capture() calls but also autocapture, $pageview, $pageleave,
+// $exception, web vitals, and dead clicks. One toggle covers every
+// PostHog code path.
 export function applyConsent(consentGranted: boolean): void {
   if (!client) return;
   try {

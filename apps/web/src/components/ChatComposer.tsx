@@ -823,6 +823,10 @@ export const ChatComposer = forwardRef<ChatComposerHandle, Props>(
             <textarea
               ref={textareaRef}
               data-testid="chat-composer-input"
+              // ph-no-capture: prompt content is the most sensitive
+              // surface in the product. PostHog autocapture skips this
+              // element + subtree entirely.
+              className="ph-no-capture"
               value={draft}
               placeholder={t('chat.composerPlaceholder')}
               onChange={handleChange}
