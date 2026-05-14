@@ -91,6 +91,7 @@ interface Props {
   onOpenLiveArtifact: (projectId: string, artifactId: string) => void;
   onDeleteProject: (id: string) => void;
   onChangeDefaultDesignSystem: (id: string) => void;
+  onDesignSystemsRefresh?: () => Promise<void> | void;
   onPersistComposioKey: (composio: AppConfig['composio']) => Promise<void> | void;
   onOpenSettings: (section?: 'execution' | 'media' | 'composio' | 'orbit' | 'integrations' | 'mcpClient' | 'language' | 'appearance' | 'notifications' | 'pet' | 'library' | 'about') => void;
 }
@@ -238,6 +239,7 @@ export function EntryView({
   onOpenLiveArtifact,
   onDeleteProject,
   onChangeDefaultDesignSystem,
+  onDesignSystemsRefresh,
   onPersistComposioKey,
   onOpenSettings,
 }: Props) {
@@ -322,6 +324,7 @@ export function EntryView({
       onOpenLiveArtifact={onOpenLiveArtifact}
       onDeleteProject={onDeleteProject}
       onChangeDefaultDesignSystem={onChangeDefaultDesignSystem}
+      {...(onDesignSystemsRefresh ? { onDesignSystemsRefresh } : {})}
       onPersistComposioKey={onPersistComposioKey}
       onOpenSettings={onOpenSettings}
     />

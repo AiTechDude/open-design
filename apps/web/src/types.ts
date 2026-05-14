@@ -56,6 +56,13 @@ export type {
   CloudflarePagesDeploySelection,
   CloudflarePagesDeploymentInfo,
   CloudflarePagesZonesResponse,
+  DesignSystemGenerationJob,
+  DesignSystemRevision,
+  DesignSystemRevisionJobRequest,
+  DesignSystemRevisionStatus,
+  DesignSystemFileDetail,
+  DesignSystemFileSummary,
+  DesignSystemProvenance,
   PreviewCommentMember,
   PreviewCommentSelectionKind,
 } from '@open-design/contracts';

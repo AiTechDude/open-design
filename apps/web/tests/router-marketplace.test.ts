@@ -61,6 +61,14 @@ describe('router entry sub-views', () => {
     expect(parseRoute('/tasks')).toEqual({ kind: 'home', view: 'tasks' });
   });
 
+  it('parses design-system creation and review routes', () => {
+    expect(parseRoute('/design-systems/new')).toEqual({ kind: 'design-system-create' });
+    expect(parseRoute('/design-systems/user%3Aacme')).toEqual({
+      kind: 'design-system-detail',
+      designSystemId: 'user:acme',
+    });
+  });
+
   it('still parses /projects/<id> as a project detail route', () => {
     expect(parseRoute('/projects/abc')).toEqual({ kind: 'project', projectId: 'abc', fileName: null });
   });
@@ -73,6 +81,8 @@ describe('router entry sub-views', () => {
       { kind: 'home', view: 'plugins' } as Route,
       { kind: 'home', view: 'design-systems' } as Route,
       { kind: 'home', view: 'integrations' } as Route,
+      { kind: 'design-system-create' } as Route,
+      { kind: 'design-system-detail', designSystemId: 'user:acme' } as Route,
     ]) {
       expect(parseRoute(buildPath(route))).toEqual(route);
     }

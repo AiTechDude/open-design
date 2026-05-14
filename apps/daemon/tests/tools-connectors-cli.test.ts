@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import { runConnectorsToolCli } from '../src/tools-connectors-cli.js';
 
@@ -10,9 +13,11 @@ describe('connectors tool CLI', () => {
   let stdoutOutput: string[];
   let stderrOutput: string[];
   let fetchMock: ReturnType<typeof vi.fn>;
+  let cwd: string;
 
   beforeEach(() => {
     process.env = { ...ORIGINAL_ENV };
+    cwd = process.cwd();
     stdoutOutput = [];
     stderrOutput = [];
     stdoutWrite = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
@@ -32,6 +37,7 @@ describe('connectors tool CLI', () => {
     stdoutWrite.mockRestore();
     stderrWrite.mockRestore();
     process.env = ORIGINAL_ENV;
+    process.chdir(cwd);
   });
 
   it('appends curated useCase query params for connector listing', async () => {
@@ -92,5 +98,106 @@ describe('connectors tool CLI', () => {
       }],
     });
     expect(stderrOutput.join('')).toBe('');
+  });
+
+  it('writes GitHub design evidence through connected connector tools', async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'od-connectors-cli-'));
+    process.chdir(tmpDir);
+    process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456';
+    process.env.OD_TOOL_TOKEN = 'agent-run-token';
+
+    const encode = (value: string) => Buffer.from(value, 'utf8').toString('base64');
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        connectors: [{
+          id: 'github',
+          name: 'GitHub',
+          provider: 'composio',
+          category: 'Developer',
+          status: 'connected',
+          tools: [{ name: 'github.github_get_repository_content' }],
+        }],
+      }), { headers: { 'Content-Type': 'application/json' }, status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        output: { data: { default_branch: 'main', html_url: 'https://github.com/acme/ui' } },
+      }), { headers: { 'Content-Type': 'application/json' }, status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        output: { data: { path: 'README.md', encoding: 'base64', content: encode('# Acme UI') } },
+      }), { headers: { 'Content-Type': 'application/json' }, status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        output: { data: { tree: [
+          { path: 'package.json', type: 'blob' },
+          { path: 'src/components/Button.tsx', type: 'blob' },
+          { path: 'src/styles.css', type: 'blob' },
+        ] } },
+      }), { headers: { 'Content-Type': 'application/json' }, status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        output: { data: 'export function Button(){ return <button className="rounded-md" /> }' },
+      }), { headers: { 'Content-Type': 'application/json' }, status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        output: { data: '{"dependencies":{"@radix-ui/react-slot":"latest"}}' },
+      }), { headers: { 'Content-Type': 'application/json' }, status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        ok: true,
+        output: { data: ':root { --color-brand: #ff5500; --radius-md: 8px; }' },
+      }), { headers: { 'Content-Type': 'application/json' }, status: 200 }));
+
+    const result = await runConnectorsToolCli(['github-design-context', '--repo', 'acme/ui', '--max-files', '3']);
+
+    expect(result.exitCode).toBe(0);
+    const stdout = JSON.parse(stdoutOutput.join(''));
+    expect(stdout).toEqual(expect.objectContaining({
+      ok: true,
+      repo: 'acme/ui',
+      method: 'connector',
+      outputPath: 'context/github/acme-ui.md',
+    }));
+    await expect(readFile(path.join(tmpDir, 'context/github/acme-ui.md'), 'utf8')).resolves.toContain('GitHub connector was used');
+    await expect(readFile(path.join(tmpDir, 'context/github/acme-ui/files/src/components/Button.tsx'), 'utf8')).resolves.toContain('rounded-md');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:7456/api/tools/connectors/execute',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('github.github_get_raw_repository_content'),
+      }),
+    );
+
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('fails instead of using public fallback when GitHub connector intake is required', async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'od-connectors-cli-'));
+    process.chdir(tmpDir);
+    process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456';
+    process.env.OD_TOOL_TOKEN = 'agent-run-token';
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        connectors: [{
+          id: 'github',
+          name: 'GitHub',
+          provider: 'composio',
+          category: 'Developer',
+          status: 'connected',
+        }],
+      }), { headers: { 'Content-Type': 'application/json' }, status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { message: 'repository access denied' },
+      }), { headers: { 'Content-Type': 'application/json' }, status: 403 }));
+
+    const result = await runConnectorsToolCli(['github-design-context', '--repo', 'acme/private-ui', '--require-connector']);
+
+    expect(result.exitCode).toBe(1);
+    expect(stderrOutput.join('')).toContain('GitHub connector intake is required and could not read the repository');
+    expect(stderrOutput.join('')).toContain('repository access denied');
+    await expect(readFile(path.join(tmpDir, 'context/github/acme-private-ui.md'), 'utf8')).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await rm(tmpDir, { recursive: true, force: true });
   });
 });

@@ -19,6 +19,8 @@ export type EntryHomeView =
 
 export type Route =
   | { kind: 'home'; view: EntryHomeView }
+  | { kind: 'design-system-create' }
+  | { kind: 'design-system-detail'; designSystemId: string }
   | { kind: 'project'; projectId: string; fileName: string | null }
   | { kind: 'marketplace' }
   | { kind: 'marketplace-detail'; pluginId: string };
@@ -41,6 +43,13 @@ export function parseRoute(pathname: string): Route {
     return { kind: 'home', view: 'projects' };
   }
   if (parts[0] === 'design-systems') {
+    if (parts[1] === 'new') return { kind: 'design-system-create' };
+    if (parts[1]) {
+      return {
+        kind: 'design-system-detail',
+        designSystemId: decodeURIComponent(parts.slice(1).join('/')),
+      };
+    }
     return { kind: 'home', view: 'design-systems' };
   }
   if (parts[0] === 'automations' || parts[0] === 'tasks') {
@@ -77,6 +86,8 @@ export function buildPath(route: Route): string {
   }
   if (route.kind === 'marketplace') return '/marketplace';
   if (route.kind === 'marketplace-detail') return `/marketplace/${encodeURIComponent(route.pluginId)}`;
+  if (route.kind === 'design-system-create') return '/design-systems/new';
+  if (route.kind === 'design-system-detail') return `/design-systems/${encodeURIComponent(route.designSystemId)}`;
   const id = encodeURIComponent(route.projectId);
   if (route.fileName) {
     const file = route.fileName
@@ -107,6 +118,7 @@ export function useRoute(): Route {
   const [route, setRoute] = useState<Route>(() => parseRoute(window.location.pathname));
   useEffect(() => {
     const onPop = () => setRoute(parseRoute(window.location.pathname));
+    onPop();
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
   }, []);

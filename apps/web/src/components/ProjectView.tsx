@@ -23,10 +23,12 @@ import {
   fetchPreviewComments,
   fetchDesignSystem,
   fetchLiveArtifacts,
+  fetchProjectFileText,
   fetchProjectFiles,
   fetchSkill,
   patchPreviewCommentStatus,
   upsertPreviewComment,
+  updateDesignSystemDraft,
   writeProjectTextFile,
 } from '../providers/registry';
 import { useProjectFileEvents, type ProjectEvent } from '../providers/project-events';
@@ -72,6 +74,7 @@ import type {
   PreviewComment,
   PreviewCommentTarget,
   ProjectFile,
+  ProjectMetadata,
   ProjectTemplate,
   LiveArtifactEventItem,
   LiveArtifactSummary,
@@ -117,6 +120,10 @@ interface Props {
   onTouchProject: () => void;
   onProjectChange: (next: Project) => void;
   onProjectsRefresh: () => void;
+  defaultDesignSystemId?: string | null;
+  onChangeDefaultDesignSystem?: (id: string) => void;
+  onDesignSystemsRefresh?: () => Promise<void> | void;
+  onUseDesignSystem?: (id: string, title: string) => void;
 }
 
 let liveArtifactEventSequence = 0;
@@ -129,6 +136,9 @@ const SPLIT_RESIZE_HANDLE_WIDTH = 8;
 const CHAT_PANEL_KEYBOARD_STEP = 16;
 const MIN_NORMAL_SPLIT_WIDTH =
   MIN_CHAT_PANEL_WIDTH + SPLIT_RESIZE_HANDLE_WIDTH + MIN_WORKSPACE_PANEL_WIDTH;
+type DesignSystemReviewEntry = NonNullable<ProjectMetadata['designSystemReview']>[string];
+type DesignSystemReviewAgentTask = NonNullable<DesignSystemReviewEntry['agentTask']>;
+type DesignSystemReviewDetails = Pick<DesignSystemReviewEntry, 'feedback' | 'files' | 'agentTask'>;
 
 function workspacePanelMinWidthForSplit(splitWidth: number): number {
   if (!Number.isFinite(splitWidth) || splitWidth <= 0) return MIN_WORKSPACE_PANEL_WIDTH;
@@ -150,6 +160,41 @@ function clampChatPanelWidth(width: number, maxWidth = MAX_CHAT_PANEL_WIDTH): nu
   const effectiveMax = Math.max(0, Math.min(MAX_CHAT_PANEL_WIDTH, Math.floor(maxWidth)));
   const effectiveMin = Math.min(MIN_CHAT_PANEL_WIDTH, effectiveMax);
   return Math.min(effectiveMax, Math.max(effectiveMin, Math.round(width)));
+}
+
+function designSystemFeedbackAttachments(
+  projectFiles: ProjectFile[],
+  sectionFiles: string[],
+): ChatAttachment[] {
+  const fileLookup = new Map(projectFiles.map((file) => [file.name, file]));
+  return sectionFiles
+    .map((name) => fileLookup.get(name))
+    .filter((file): file is ProjectFile => Boolean(file))
+    .slice(0, 8)
+    .map((file) => ({
+      path: file.name,
+      name: file.name,
+      kind: file.kind === 'image' ? 'image' : 'file',
+      size: file.size,
+    }));
+}
+
+function designSystemNeedsWorkPrompt(
+  sectionTitle: string,
+  feedback: string,
+  sectionFiles: string[],
+): string {
+  const fileList =
+    sectionFiles.length > 0
+      ? sectionFiles.map((name) => `- @${name}`).join('\n')
+      : '- No generated files are registered for this section yet.';
+  return (
+    `Needs work on the design system section "${sectionTitle}".\n\n` +
+    `User feedback:\n${feedback}\n\n` +
+    `Relevant section files:\n${fileList}\n\n` +
+    'Revise the design-system project files directly. Keep DESIGN.md, tokens, previews, UI kit examples, and assets consistent with the feedback. ' +
+    'After editing, summarize what changed and which files should be reviewed again.'
+  );
 }
 
 function readSavedChatPanelWidth(): number {
@@ -236,6 +281,10 @@ export function ProjectView({
   onTouchProject,
   onProjectChange,
   onProjectsRefresh,
+  defaultDesignSystemId = null,
+  onChangeDefaultDesignSystem,
+  onDesignSystemsRefresh,
+  onUseDesignSystem,
 }: Props) {
   const t = useT();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -525,6 +574,20 @@ export function ProjectView({
     return nextFiles;
   }, [refreshLiveArtifacts, refreshProjectFiles]);
 
+  const syncProjectBackedDesignSystemSource = useCallback(async (): Promise<boolean> => {
+    if (project.metadata?.importedFrom !== 'design-system') return false;
+    if (!project.designSystemId?.startsWith('user:')) return false;
+    const body = await fetchProjectFileText(project.id, 'DESIGN.md', {
+      cache: 'no-store',
+      cacheBustKey: Date.now(),
+    });
+    if (!body?.trim()) return false;
+    const updated = await updateDesignSystemDraft(project.designSystemId, { body });
+    if (!updated) return false;
+    await onDesignSystemsRefresh?.();
+    return true;
+  }, [onDesignSystemsRefresh, project.designSystemId, project.id, project.metadata?.importedFrom]);
+
   const requestOpenFile = useCallback((name: string) => {
     if (!name) return;
     setOpenRequest({ name, nonce: Date.now() });
@@ -558,6 +621,9 @@ export function ProjectView({
   const handleProjectEvent = useCallback((evt: ProjectEvent) => {
     if (evt.type === 'file-changed') {
       setFilesRefresh((n) => n + 1);
+      if (evt.path === 'DESIGN.md') {
+        void syncProjectBackedDesignSystemSource();
+      }
       return;
     }
     const agentEvent = projectEventToAgentEvent(evt);
@@ -565,7 +631,7 @@ export function ProjectView({
     setLiveArtifactEvents((prev) => appendLiveArtifactEventItem(prev, agentEvent));
     void refreshLiveArtifacts();
     onProjectsRefresh();
-  }, [onProjectsRefresh, refreshLiveArtifacts]);
+  }, [onProjectsRefresh, refreshLiveArtifacts, syncProjectBackedDesignSystemSource]);
   useProjectFileEvents(project.id, daemonLive, handleProjectEvent);
 
   // When the URL points at a specific file, fire an open request so the
@@ -936,6 +1002,7 @@ export function ProjectView({
               setStreaming(false);
               persistNow();
               void refreshProjectFiles();
+              void syncProjectBackedDesignSystemSource();
               onProjectsRefresh();
             },
             onError: (err) => {
@@ -1279,6 +1346,7 @@ export function ProjectView({
               return updated;
             });
           });
+          void syncProjectBackedDesignSystemSource();
           onProjectsRefresh();
         },
         onError: (err: Error) => {
@@ -1378,6 +1446,7 @@ export function ProjectView({
       projectFiles,
       refreshProjectFiles,
       refreshLiveArtifacts,
+      syncProjectBackedDesignSystemSource,
       requestOpenFile,
       persistMessage,
       persistMessageById,
@@ -1626,6 +1695,16 @@ export function ProjectView({
     return [skill, ds].filter(Boolean).join(' · ') || t('project.metaFreeform');
   }, [skills, designSystems, project.skillId, project.designSystemId, t]);
 
+  const designSystemProject = useMemo(() => {
+    if (project.metadata?.importedFrom !== 'design-system') return null;
+    if (!project.designSystemId) return null;
+    return designSystems.find((d) => d.id === project.designSystemId) ?? null;
+  }, [designSystems, project.designSystemId, project.metadata]);
+  const designSystemActivityEvents = useMemo(
+    () => designSystemProject ? latestDesignSystemActivityEvents(messages) : [],
+    [designSystemProject, messages],
+  );
+
   const isDeck = useMemo(
     () => skills.find((s) => s.id === project.skillId)?.mode === 'deck',
     [skills, project.skillId],
@@ -1833,6 +1912,107 @@ export function ProjectView({
   const [initialDraft, setInitialDraft] = useState<string | undefined>(
     autoSendSeedRef.current ? undefined : project.pendingPrompt,
   );
+  const composerDraftCommand: { id: string; text: string } | null = null;
+  const sentDesignSystemReviewTaskKeysRef = useRef<Set<string>>(new Set());
+  const persistDesignSystemReviewEntry = useCallback((
+    sectionTitle: string,
+    entry: DesignSystemReviewEntry,
+  ) => {
+    const baseMetadata: ProjectMetadata = {
+      kind: project.metadata?.kind ?? 'other',
+      ...project.metadata,
+    };
+    const metadata: ProjectMetadata = {
+      ...baseMetadata,
+      designSystemReview: {
+        ...(baseMetadata.designSystemReview ?? {}),
+        [sectionTitle]: entry,
+      },
+    };
+    onProjectChange({ ...project, metadata });
+    void patchProject(project.id, { metadata });
+  }, [onProjectChange, project]);
+  const sendDesignSystemFeedback = useCallback((
+    sectionTitle: string,
+    feedback: string,
+    sectionFiles: string[],
+  ): DesignSystemReviewAgentTask | void => {
+    const cleanFeedback = feedback.trim();
+    if (!cleanFeedback) return;
+    const prompt = designSystemNeedsWorkPrompt(sectionTitle, cleanFeedback, sectionFiles);
+    const queuedAt = new Date().toISOString();
+    if (!activeConversationId || !messagesInitialized || streaming) {
+      return {
+        status: 'queued',
+        prompt,
+        queuedAt,
+      };
+    }
+    const task: DesignSystemReviewAgentTask = {
+      status: 'sent',
+      prompt,
+      queuedAt,
+      sentAt: queuedAt,
+    };
+    sentDesignSystemReviewTaskKeysRef.current.add(`${sectionTitle}:${queuedAt}`);
+    void handleSend(prompt, designSystemFeedbackAttachments(projectFiles, sectionFiles), []);
+    return task;
+  }, [activeConversationId, handleSend, messagesInitialized, projectFiles, streaming]);
+  const persistDesignSystemReviewDecision = useCallback((
+    sectionTitle: string,
+    decision: DesignSystemReviewEntry['decision'],
+    details?: DesignSystemReviewDetails,
+  ) => {
+    const entry: DesignSystemReviewEntry = {
+      decision,
+      updatedAt: new Date().toISOString(),
+    };
+    if (details?.feedback) entry.feedback = details.feedback;
+    if (details?.files) entry.files = details.files;
+    if (details?.agentTask) entry.agentTask = details.agentTask;
+    persistDesignSystemReviewEntry(sectionTitle, entry);
+  }, [persistDesignSystemReviewEntry]);
+  useEffect(() => {
+    if (!activeConversationId || !messagesInitialized || streaming) return;
+    const queued = Object.entries(project.metadata?.designSystemReview ?? {}).find(
+      ([, entry]) =>
+        entry.decision === 'needs-work'
+        && Boolean(entry.feedback?.trim())
+        && entry.agentTask?.status === 'queued',
+    );
+    if (!queued) return;
+    const [sectionTitle, entry] = queued;
+    const task = entry.agentTask;
+    if (!task) return;
+    const taskKey = `${sectionTitle}:${task.queuedAt}`;
+    if (sentDesignSystemReviewTaskKeysRef.current.has(taskKey)) return;
+    sentDesignSystemReviewTaskKeysRef.current.add(taskKey);
+    const sectionFiles = entry.files ?? [];
+    const prompt = task.prompt || designSystemNeedsWorkPrompt(
+      sectionTitle,
+      entry.feedback ?? '',
+      sectionFiles,
+    );
+    const sentAt = new Date().toISOString();
+    persistDesignSystemReviewEntry(sectionTitle, {
+      ...entry,
+      agentTask: {
+        ...task,
+        status: 'sent',
+        prompt,
+        sentAt,
+      },
+    });
+    void handleSend(prompt, designSystemFeedbackAttachments(projectFiles, sectionFiles), []);
+  }, [
+    activeConversationId,
+    handleSend,
+    messagesInitialized,
+    persistDesignSystemReviewEntry,
+    project.metadata?.designSystemReview,
+    projectFiles,
+    streaming,
+  ]);
   useEffect(() => {
     if (initialDraft && activeConversationId) {
       setInitialDraft(undefined);
@@ -2009,6 +2189,7 @@ export function ProjectView({
               onStop={handleStop}
               onRequestOpenFile={requestOpenFile}
               initialDraft={initialDraft}
+              draftCommand={composerDraftCommand}
               onSubmitForm={(text) => {
                 if (streaming) return;
                 void handleSend(text, [], []);
@@ -2028,6 +2209,7 @@ export function ProjectView({
               onOpenPetSettings={onOpenPetSettings}
               researchAvailable={config.mode === 'daemon'}
               projectMetadata={project.metadata}
+              hasActiveDesignSystem={!!project.designSystemId}
               onProjectMetadataChange={(metadata) => {
                 onProjectChange({ ...project, metadata });
               }}
@@ -2071,6 +2253,7 @@ export function ProjectView({
           streaming={streaming}
           openRequest={openRequest}
           liveArtifactEvents={liveArtifactEvents}
+          designSystemActivityEvents={designSystemActivityEvents}
           tabsState={openTabsState}
           onTabsStateChange={persistTabsState}
           previewComments={previewComments}
@@ -2079,6 +2262,14 @@ export function ProjectView({
           onSendBoardCommentAttachments={handleSendBoardCommentAttachments}
           focusMode={workspaceFocused}
           onFocusModeChange={setWorkspaceFocused}
+          designSystemProject={designSystemProject}
+          defaultDesignSystemId={defaultDesignSystemId}
+          onSetDefaultDesignSystem={onChangeDefaultDesignSystem}
+          onDesignSystemsRefresh={onDesignSystemsRefresh}
+          onDesignSystemNeedsWork={sendDesignSystemFeedback}
+          designSystemReview={project.metadata?.designSystemReview}
+          onDesignSystemReviewDecision={persistDesignSystemReviewDecision}
+          onUseDesignSystem={onUseDesignSystem}
         />
       </div>
     </div>
@@ -2108,6 +2299,16 @@ function isTerminalRunStatus(status: ChatMessage['runStatus']): boolean {
 
 function isActiveRunStatus(status: ChatMessage['runStatus']): boolean {
   return status === 'queued' || status === 'running';
+}
+
+function latestDesignSystemActivityEvents(messages: ChatMessage[]): AgentEvent[] {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role !== 'assistant') continue;
+    if ((message.events?.length ?? 0) > 0) return message.events ?? [];
+    if (isActiveRunStatus(message.runStatus)) return [];
+  }
+  return [];
 }
 
 // A daemon assistant message that is "queued/running" but has no runId yet

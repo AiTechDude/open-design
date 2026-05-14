@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectView, resolveSucceededRunStatus } from '../../src/components/ProjectView';
 
@@ -8,10 +8,12 @@ const listConversations = vi.fn();
 const listMessages = vi.fn();
 const fetchPreviewComments = vi.fn();
 const loadTabs = vi.fn();
+const fetchProjectFileText = vi.fn();
 const fetchProjectFiles = vi.fn();
 const fetchLiveArtifacts = vi.fn();
 const fetchSkill = vi.fn();
 const fetchDesignSystem = vi.fn();
+const updateDesignSystemDraft = vi.fn();
 const getTemplate = vi.fn();
 const fetchChatRunStatus = vi.fn();
 const listActiveChatRuns = vi.fn();
@@ -43,10 +45,12 @@ vi.mock('../../src/providers/registry', () => ({
   fetchPreviewComments: (...args: unknown[]) => fetchPreviewComments(...args),
   fetchDesignSystem: (...args: unknown[]) => fetchDesignSystem(...args),
   fetchLiveArtifacts: (...args: unknown[]) => fetchLiveArtifacts(...args),
+  fetchProjectFileText: (...args: unknown[]) => fetchProjectFileText(...args),
   fetchProjectFiles: (...args: unknown[]) => fetchProjectFiles(...args),
   fetchSkill: (...args: unknown[]) => fetchSkill(...args),
   patchPreviewCommentStatus: vi.fn(),
   upsertPreviewComment: vi.fn(),
+  updateDesignSystemDraft: (...args: unknown[]) => updateDesignSystemDraft(...args),
   writeProjectTextFile: vi.fn(),
 }));
 
@@ -87,8 +91,12 @@ vi.mock('../../src/components/ChatPane', () => ({
   },
 }));
 
+const fileWorkspaceSpy = vi.fn();
 vi.mock('../../src/components/FileWorkspace', () => ({
-  FileWorkspace: () => null,
+  FileWorkspace: (props: Record<string, unknown>) => {
+    fileWorkspaceSpy(props);
+    return null;
+  },
 }));
 
 vi.mock('../../src/components/Loading', () => ({
@@ -99,6 +107,213 @@ describe('ProjectView daemon cleanup', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it('syncs project DESIGN.md back to the user design-system registry after an agent run', async () => {
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([]);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]);
+    fetchProjectFileText.mockResolvedValue('# Acme Design System\n\nUpdated by the agent.\n');
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    updateDesignSystemDraft.mockResolvedValue({
+      id: 'user:acme',
+      title: 'Acme Design System',
+      body: '# Acme Design System\n\nUpdated by the agent.\n',
+      status: 'draft',
+    });
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    streamViaDaemon.mockImplementation(async (options: {
+      onRunCreated?: (runId: string) => void;
+      handlers: { onDone: () => void };
+    }) => {
+      options.onRunCreated?.('run-1');
+      options.handlers.onDone();
+    });
+    const onDesignSystemsRefresh = vi.fn();
+
+    chatPaneSpy.mockClear();
+    render(
+      <ProjectView
+        project={{
+          id: 'ds-acme',
+          name: 'Acme Design System',
+          skillId: null,
+          designSystemId: 'user:acme',
+          metadata: { kind: 'other', importedFrom: 'design-system' },
+        } as never}
+        routeFileName={null}
+        config={{ mode: 'daemon', agentId: 'agent-1', notifications: undefined, agentModels: {} } as never}
+        agents={[{ id: 'agent-1', name: 'OpenCode', models: [] } as never]}
+        skills={[]}
+        designSystems={[
+          {
+            id: 'user:acme',
+            title: 'Acme Design System',
+            status: 'draft',
+            source: 'user',
+            isEditable: true,
+          } as never,
+        ]}
+        daemonLive
+        onModeChange={() => {}}
+        onAgentChange={() => {}}
+        onAgentModelChange={() => {}}
+        onRefreshAgents={() => {}}
+        onOpenSettings={() => {}}
+        onBack={() => {}}
+        onClearPendingPrompt={() => {}}
+        onTouchProject={() => {}}
+        onProjectChange={() => {}}
+        onProjectsRefresh={() => {}}
+        onDesignSystemsRefresh={onDesignSystemsRefresh}
+      />,
+    );
+
+    await waitFor(() => expect(chatPaneSpy).toHaveBeenCalled());
+    const sendProps = chatPaneSpy.mock.calls.at(-1)?.[0] as {
+      onSend?: (prompt: string, attachments: unknown[], comments: unknown[]) => Promise<void>;
+    } | undefined;
+    await sendProps!.onSend!('generate the design system', [], []);
+
+    await waitFor(() => {
+      expect(updateDesignSystemDraft).toHaveBeenCalledWith('user:acme', {
+        body: '# Acme Design System\n\nUpdated by the agent.\n',
+      });
+    });
+    expect(onDesignSystemsRefresh).toHaveBeenCalled();
+  });
+
+  it('turns Design System Needs work feedback into a persisted agent task', async () => {
+    listConversations.mockResolvedValue([{ id: 'conv-1', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([]);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([
+      {
+        name: 'preview/colors.html',
+        path: 'preview/colors.html',
+        type: 'file',
+        kind: 'html',
+        size: 100,
+        mtime: Date.now(),
+      },
+    ]);
+    fetchProjectFileText.mockResolvedValue('# Acme Design System\n');
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    streamViaDaemon.mockImplementation(async (options: {
+      onRunCreated?: (runId: string) => void;
+      handlers: { onDone: () => void };
+    }) => {
+      options.onRunCreated?.('run-review');
+      options.handlers.onDone();
+    });
+
+    render(
+      <ProjectView
+        project={{
+          id: 'ds-acme',
+          name: 'Acme Design System',
+          skillId: null,
+          designSystemId: 'user:acme',
+          metadata: { kind: 'other', importedFrom: 'design-system' },
+        } as never}
+        routeFileName={null}
+        config={{ mode: 'daemon', agentId: 'agent-1', notifications: undefined, agentModels: {} } as never}
+        agents={[{ id: 'agent-1', name: 'OpenCode', models: [] } as never]}
+        skills={[]}
+        designSystems={[
+          {
+            id: 'user:acme',
+            title: 'Acme Design System',
+            status: 'draft',
+            source: 'user',
+            isEditable: true,
+          } as never,
+        ]}
+        daemonLive
+        onModeChange={() => {}}
+        onAgentChange={() => {}}
+        onAgentModelChange={() => {}}
+        onRefreshAgents={() => {}}
+        onOpenSettings={() => {}}
+        onBack={() => {}}
+        onClearPendingPrompt={() => {}}
+        onTouchProject={() => {}}
+        onProjectChange={() => {}}
+        onProjectsRefresh={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      const props = fileWorkspaceSpy.mock.calls.at(-1)?.[0] as { files?: unknown[] } | undefined;
+      expect(props?.files).toHaveLength(1);
+    });
+
+    const props = fileWorkspaceSpy.mock.calls.at(-1)?.[0] as {
+      onDesignSystemNeedsWork: (
+        sectionTitle: string,
+        feedback: string,
+        files: string[],
+      ) => { status: string; prompt: string; queuedAt: string; sentAt?: string };
+      onDesignSystemReviewDecision: (
+        sectionTitle: string,
+        decision: string,
+        details: Record<string, unknown>,
+      ) => void;
+    };
+    let agentTask: { status: string; prompt: string; queuedAt: string; sentAt?: string } | undefined;
+    await act(async () => {
+      agentTask = props.onDesignSystemNeedsWork(
+        'colors',
+        'Make the palette contrast clearer.',
+        ['preview/colors.html'],
+      );
+      props.onDesignSystemReviewDecision('colors', 'needs-work', {
+        feedback: 'Make the palette contrast clearer.',
+        files: ['preview/colors.html'],
+        agentTask,
+      });
+    });
+
+    expect(agentTask).toMatchObject({
+      status: 'sent',
+      prompt: expect.stringContaining('Make the palette contrast clearer.'),
+      sentAt: expect.any(String),
+    });
+    await waitFor(() => {
+      expect(saveMessage).toHaveBeenCalledWith(
+        'ds-acme',
+        'conv-1',
+        expect.objectContaining({
+          role: 'user',
+          content: expect.stringContaining('Needs work on the design system section "colors"'),
+        }),
+      );
+    });
+    expect(patchProject).toHaveBeenCalledWith(
+      'ds-acme',
+      {
+        metadata: expect.objectContaining({
+          designSystemReview: expect.objectContaining({
+            colors: expect.objectContaining({
+              decision: 'needs-work',
+              feedback: 'Make the palette contrast clearer.',
+              files: ['preview/colors.html'],
+              agentTask: expect.objectContaining({ status: 'sent' }),
+            }),
+          }),
+        }),
+      },
+    );
   });
 
   it('does not abort daemon cancel reattach controllers during unmount cleanup', async () => {
@@ -296,6 +511,80 @@ describe('ProjectView daemon cleanup', () => {
       expect(lastProps?.initialDraft).toBeUndefined();
     } finally {
       window.sessionStorage.removeItem('od:auto-send-first:project-2');
+    }
+  });
+
+  it('auto-sends the first design-system generation task through the normal project agent', async () => {
+    const prompt =
+      'Create this project as a complete Open Design design system workspace.';
+    listConversations.mockResolvedValue([{ id: 'conv-design-system', title: 'Conversation' }]);
+    listMessages.mockResolvedValue([]);
+    fetchPreviewComments.mockResolvedValue([]);
+    loadTabs.mockResolvedValue({ tabs: [], activeTabId: null });
+    fetchProjectFiles.mockResolvedValue([]);
+    fetchLiveArtifacts.mockResolvedValue([]);
+    fetchSkill.mockResolvedValue(null);
+    fetchDesignSystem.mockResolvedValue(null);
+    getTemplate.mockResolvedValue(null);
+    listActiveChatRuns.mockResolvedValue([]);
+    streamViaDaemon.mockImplementation(async (options: { onRunCreated?: (runId: string) => void }) => {
+      options.onRunCreated?.('run-design-system');
+    });
+
+    window.sessionStorage.setItem('od:auto-send-first:ds-core-design-system', '1');
+
+    try {
+      render(
+        <ProjectView
+          project={{
+            id: 'ds-core-design-system',
+            name: 'Core Design System',
+            skillId: null,
+            designSystemId: 'user:core-design-system',
+            pendingPrompt: prompt,
+            metadata: { kind: 'other', importedFrom: 'design-system' },
+          } as never}
+          routeFileName={null}
+          config={{ mode: 'daemon', agentId: 'agent-1', notifications: undefined, agentModels: {} } as never}
+          agents={[{ id: 'agent-1', name: 'OpenCode', models: [] } as never]}
+          skills={[]}
+          designSystems={[
+            {
+              id: 'user:core-design-system',
+              title: 'Core Design System',
+              status: 'draft',
+              source: 'user',
+              isEditable: true,
+            } as never,
+          ]}
+          daemonLive
+          onModeChange={() => {}}
+          onAgentChange={() => {}}
+          onAgentModelChange={() => {}}
+          onRefreshAgents={() => {}}
+          onOpenSettings={() => {}}
+          onBack={() => {}}
+          onClearPendingPrompt={() => {}}
+          onTouchProject={() => {}}
+          onProjectChange={() => {}}
+          onProjectsRefresh={() => {}}
+        />,
+      );
+
+      await waitFor(() => expect(streamViaDaemon).toHaveBeenCalledTimes(1));
+      const options = streamViaDaemon.mock.calls[0]?.[0] as {
+        projectId?: string;
+        conversationId?: string | null;
+        designSystemId?: string | null;
+        history?: unknown;
+      };
+      expect(options.projectId).toBe('ds-core-design-system');
+      expect(options.conversationId).toBe('conv-design-system');
+      expect(options.designSystemId).toBe('user:core-design-system');
+      expect(JSON.stringify(options.history)).toContain(prompt);
+      expect(window.sessionStorage.getItem('od:auto-send-first:ds-core-design-system')).toBeNull();
+    } finally {
+      window.sessionStorage.removeItem('od:auto-send-first:ds-core-design-system');
     }
   });
 

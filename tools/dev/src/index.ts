@@ -324,6 +324,25 @@ async function runLoggedCommand(request: {
   });
 }
 
+async function ensureDaemonCliBuild(config: ToolDevConfig, logHandle: FileHandle): Promise<void> {
+  const cliPath = path.join(config.workspaceRoot, "apps/daemon/dist/cli.js");
+  const cliStat = await lstat(cliPath).catch(() => null);
+  if (cliStat?.isFile()) return;
+
+  await logHandle.write(
+    `\n[tools-dev] building @open-design/daemon because apps/daemon/dist/cli.js is missing at ${new Date().toISOString()}\n`,
+  );
+  const invocation = createPackageManagerInvocation(["--filter", "@open-design/daemon", "build"], process.env);
+  await runLoggedCommand({
+    args: invocation.args,
+    command: invocation.command,
+    cwd: config.workspaceRoot,
+    env: process.env,
+    logFd: logHandle.fd,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
+  });
+}
+
 function createAppStamp(config: ToolDevConfig, appName: ToolDevAppName) {
   const currentAppConfig = appConfig(config, appName);
   const stamp = {
@@ -410,6 +429,7 @@ async function spawnDaemonRuntime(config: ToolDevConfig, options: CliOptions): P
   try {
     await logHandle.write(`\n[tools-dev] launching daemon at ${new Date().toISOString()}\n`);
     if (webPort != null) await logHandle.write(`[tools-dev] trusting web origin port ${webPort}\n`);
+    await ensureDaemonCliBuild(config, logHandle);
     return await spawnSidecarRuntime({
       appName: APP_KEYS.DAEMON,
       config,

@@ -53,6 +53,26 @@ export interface PromptTemplateMetadata {
   source?: PromptTemplateMetadataSource;
 }
 
+export type DesignSystemReviewDecision = 'looks-good' | 'needs-work';
+
+export type DesignSystemReviewTaskStatus = 'queued' | 'sent' | 'failed';
+
+export interface DesignSystemReviewAgentTask {
+  status: DesignSystemReviewTaskStatus;
+  prompt: string;
+  queuedAt: string;
+  sentAt?: string;
+  error?: string;
+}
+
+export interface DesignSystemReviewEntry {
+  decision: DesignSystemReviewDecision;
+  updatedAt: string;
+  feedback?: string;
+  files?: string[];
+  agentTask?: DesignSystemReviewAgentTask;
+}
+
 export interface ProjectMetadata {
   kind: ProjectKind;
   intent?: 'live-artifact';
@@ -86,6 +106,9 @@ export interface ProjectMetadata {
   promptTemplate?: PromptTemplateMetadata;
   // Absolute paths to local code folders the agent can read via --add-dir.
   linkedDirs?: string[];
+  // Stored on design-system projects so the review overview can remember
+  // which generated sections were accepted or sent back for another pass.
+  designSystemReview?: Record<string, DesignSystemReviewEntry>;
 }
 
 export interface Project {

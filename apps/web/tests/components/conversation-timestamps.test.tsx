@@ -76,4 +76,38 @@ describe('conversation timestamps', () => {
 
     expect(screen.getAllByRole('separator')).toHaveLength(2);
   });
+
+  it('compacts long design-system creation prompts in user messages', () => {
+    const prompt = [
+      'Create this project as a complete Open Design design system workspace.',
+      '',
+      'Company / design system context:',
+      'Acme: analytics workspace for operations teams',
+      '',
+      'Source context manifest: `context/source-context.md`',
+      'Read `context/source-context.md` before drafting design guidance.',
+      '',
+      'Provided resources:',
+      '- GitHub/code: https://github.com/acme/product',
+      '- Local code folder: /Users/acme/product-ui',
+      '',
+      'GitHub connector intake is required before drafting the design system.',
+      '1. Run connector discovery.',
+      '2. Read repository files.',
+    ].join('\n');
+
+    renderChatPane([
+      {
+        id: 'user-ds',
+        role: 'user',
+        content: prompt,
+        createdAt: Date.now(),
+      },
+    ]);
+
+    expect(screen.getByText('Design-system setup brief')).toBeTruthy();
+    expect(screen.getByText('Acme: analytics workspace for operations teams')).toBeTruthy();
+    expect(screen.getByText('context/source-context.md')).toBeTruthy();
+    expect(screen.queryByText('GitHub connector intake is required before drafting the design system.')).toBeNull();
+  });
 });

@@ -91,9 +91,13 @@ export function defaultDesignSystemSelection(
   designSystems: DesignSystemSummary[],
 ): string[] {
   if (!defaultDesignSystemId) return [];
-  return designSystems.some((d) => d.id === defaultDesignSystemId)
+  return designSystems.some((d) => d.id === defaultDesignSystemId && isUsableDesignSystem(d))
     ? [defaultDesignSystemId]
     : [];
+}
+
+export function isUsableDesignSystem(system: DesignSystemSummary): boolean {
+  return (system.status ?? 'published') === 'published';
 }
 
 export function buildDesignSystemCreateSelection(
@@ -135,9 +139,17 @@ export function NewProjectPanel({
   // Design-system selection is now an *array* internally so the same
   // component can drive both single-select and multi-select modes without
   // duplicating state. Single-select coerces to length 0/1.
+  const usableDesignSystems = useMemo(
+    () => designSystems.filter(isUsableDesignSystem),
+    [designSystems],
+  );
+  const usableDesignSystemIds = useMemo(
+    () => new Set(usableDesignSystems.map((system) => system.id)),
+    [usableDesignSystems],
+  );
   const initialDefaultDsSelection = useMemo(
-    () => defaultDesignSystemSelection(defaultDesignSystemId, designSystems),
-    [defaultDesignSystemId, designSystems],
+    () => defaultDesignSystemSelection(defaultDesignSystemId, usableDesignSystems),
+    [defaultDesignSystemId, usableDesignSystems],
   );
   const [selectedDsIds, setSelectedDsIds] = useState<string[]>(
     () => initialDefaultDsSelection,
@@ -216,6 +228,12 @@ export function NewProjectPanel({
     if (dsSelectionTouched) return;
     setSelectedDsIds(initialDefaultDsSelection);
   }, [dsSelectionTouched, initialDefaultDsSelection]);
+
+  useEffect(() => {
+    setSelectedDsIds((current) =>
+      current.filter((id) => usableDesignSystemIds.has(id)),
+    );
+  }, [usableDesignSystemIds]);
 
   // When entering the template tab, snap to the first user-saved template
   // if there is one (and we don't already have a valid pick). The template
@@ -453,7 +471,7 @@ export function NewProjectPanel({
 
         {showDesignSystemPicker ? (
           <DesignSystemPicker
-            designSystems={designSystems}
+            designSystems={usableDesignSystems}
             defaultDesignSystemId={defaultDesignSystemId}
             selectedIds={selectedDsIds}
             multi={dsMulti}

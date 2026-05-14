@@ -695,7 +695,14 @@ export function ConnectorsBrowser({
         });
         const result = await connectConnector(connectorId);
         updateConnector(result.connector);
-        if (result.connector && !result.error) {
+        const shouldUpdateAuthorizationPending =
+          result.connector &&
+          (
+            result.auth?.kind === 'redirect_required' ||
+            result.auth?.kind === 'pending' ||
+            !result.error
+          );
+        if (shouldUpdateAuthorizationPending) {
           setConnectorAuthorizationPending((curr) => updateConnectorAuthorizationPendingFromConnectResponse(curr, {
             connector: result.connector!,
             ...(result.auth === undefined ? {} : { auth: result.auth }),

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { EntryView } from './components/EntryView';
+import {
+  DesignSystemCreationFlow,
+} from './components/DesignSystemFlow';
 import type { IntegrationTab } from './components/IntegrationsView';
 import { MarketplaceView } from './components/MarketplaceView';
 import { PluginDetailView } from './components/PluginDetailView';
@@ -20,6 +23,7 @@ import {
   fetchDesignSystems,
   fetchPromptTemplates,
   fetchSkills,
+  ensureDesignSystemWorkspace,
 } from './providers/registry';
 import { navigate, useRoute } from './router';
 import {
@@ -57,6 +61,7 @@ import type {
   AppVersionInfo,
   DesignSystemSummary,
   Project,
+  ProjectMetadata,
   ProjectTemplate,
   PromptTemplateSummary,
   SkillSummary,
@@ -67,6 +72,31 @@ export function shouldSyncMediaProvidersOnSave(
   options?: { force?: boolean },
 ): boolean {
   return Boolean(options?.force) || hasAnyConfiguredProvider(mediaProviders);
+}
+
+function isPublishedDesignSystem(system: DesignSystemSummary | undefined): boolean {
+  if (!system) return false;
+  return (system.status ?? 'published') === 'published';
+}
+
+function firstPublishedDesignSystemId(designSystems: DesignSystemSummary[]): string | null {
+  return (
+    designSystems.find((d) => d.id === 'default' && isPublishedDesignSystem(d))?.id
+    ?? designSystems.find(isPublishedDesignSystem)?.id
+    ?? null
+  );
+}
+
+function defaultPrototypeSkillId(skills: SkillSummary[]): string | null {
+  const prototypes = skills.filter((skill) => skill.mode === 'prototype');
+  return prototypes.find((skill) => skill.defaultFor.includes('prototype'))?.id
+    ?? prototypes[0]?.id
+    ?? null;
+}
+
+function projectNameFromDesignSystem(title: string): string {
+  const base = title.replace(/\s+Design System$/i, '').trim();
+  return `${base || 'New'} design`;
 }
 
 function normalizeSavedComposioConfig(config: AppConfig['composio']): AppConfig['composio'] {
@@ -336,9 +366,8 @@ export function App() {
   useEffect(() => {
     if (!daemonConfigLoaded || dsLoading) return;
     if (config.designSystemId) return;
-    if (designSystems.length === 0) return;
-    const id =
-      designSystems.find((d) => d.id === 'default')?.id ?? designSystems[0]!.id;
+    const id = firstPublishedDesignSystemId(designSystems);
+    if (!id) return;
     setConfig((prev) => {
       if (prev.designSystemId) return prev;
       const next: AppConfig = { ...prev, designSystemId: id };
@@ -347,6 +376,20 @@ export function App() {
       return next;
     });
   }, [daemonConfigLoaded, dsLoading, designSystems, config.designSystemId]);
+
+  useEffect(() => {
+    if (!daemonConfigLoaded || dsLoading || !config.designSystemId) return;
+    const selected = designSystems.find((d) => d.id === config.designSystemId);
+    if (selected && isPublishedDesignSystem(selected)) return;
+    const fallbackId = firstPublishedDesignSystemId(designSystems);
+    setConfig((prev) => {
+      if (prev.designSystemId !== config.designSystemId) return prev;
+      const next: AppConfig = { ...prev, designSystemId: fallbackId };
+      saveConfig(next);
+      void syncConfigToDaemon(next);
+      return next;
+    });
+  }, [config.designSystemId, daemonConfigLoaded, designSystems, dsLoading]);
 
   // One-shot self-healing migration for pets adopted before the
   // overlay learned atlas-row switching. If the stored pet is a
@@ -519,13 +562,22 @@ export function App() {
 
   const handleChangeDefaultDesignSystem = useCallback(
     (designSystemId: string) => {
+      const target = designSystems.find((system) => system.id === designSystemId);
+      if (!isPublishedDesignSystem(target)) return;
       const next = { ...config, designSystemId };
       saveConfig(next);
       void syncConfigToDaemon(next);
       setConfig(next);
     },
-    [config],
+    [config, designSystems],
   );
+
+  const refreshDesignSystems = useCallback(async () => {
+    setDsLoading(true);
+    const list = await fetchDesignSystems();
+    setDesignSystems(list);
+    setDsLoading(false);
+  }, []);
 
   const refreshAgents = useCallback(
     async (options?: { throwOnError?: boolean; agentCliEnv?: AppConfig['agentCliEnv'] }) => {
@@ -602,6 +654,24 @@ export function App() {
       });
     },
     [],
+  );
+
+  const handleUseDesignSystem = useCallback(
+    (designSystemId: string, title: string) => {
+      const target = designSystems.find((system) => system.id === designSystemId);
+      if (!isPublishedDesignSystem(target)) return;
+      const metadata: ProjectMetadata = {
+        kind: 'prototype',
+        fidelity: 'high-fidelity',
+      };
+      void handleCreateProject({
+        name: projectNameFromDesignSystem(title || target?.title || 'New design'),
+        skillId: defaultPrototypeSkillId(skills),
+        designSystemId,
+        metadata,
+      });
+    },
+    [designSystems, handleCreateProject, skills],
   );
 
   const handleCreatePluginShareProject = useCallback(
@@ -716,6 +786,32 @@ export function App() {
     route.kind === 'project'
       ? (projects.find((p) => p.id === route.projectId) ?? null)
       : null;
+
+  useEffect(() => {
+    if (route.kind !== 'design-system-detail') return;
+    if (!daemonLive) return;
+    let cancelled = false;
+    (async () => {
+      const workspace = await ensureDesignSystemWorkspace(route.designSystemId);
+      if (cancelled) return;
+      if (!workspace) {
+        navigate({ kind: 'home', view: 'design-systems' }, { replace: true });
+        return;
+      }
+      setProjects((curr) => [
+        workspace.project,
+        ...curr.filter((p) => p.id !== workspace.project.id),
+      ]);
+      void refreshDesignSystems();
+      navigate(
+        { kind: 'project', projectId: workspace.project.id, fileName: null },
+        { replace: true },
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [route, daemonLive, refreshDesignSystems]);
 
   // Deep-linked route to a project we don't have yet (e.g. after a refresh
   // that finishes after the project list comes back). Fetch it in the
@@ -844,6 +940,20 @@ export function App() {
   if (route.kind === 'marketplace-detail') {
     return <PluginDetailView pluginId={route.pluginId} />;
   }
+  if (route.kind === 'design-system-create') {
+    return (
+      <DesignSystemCreationFlow
+        onBack={() => navigate({ kind: 'home', view: 'design-systems' })}
+        onCreated={(id) => navigate({ kind: 'design-system-detail', designSystemId: id })}
+        onSystemsRefresh={refreshDesignSystems}
+        config={config}
+        onOpenConnectorsTab={() => openSettings('composio')}
+      />
+    );
+  }
+  if (route.kind === 'design-system-detail') {
+    return <div className="od-loading-shell">Opening design system project...</div>;
+  }
 
   return (
     <>
@@ -871,6 +981,10 @@ export function App() {
           onTouchProject={handleTouchProject}
           onProjectChange={handleProjectChange}
           onProjectsRefresh={refreshProjects}
+          defaultDesignSystemId={config.designSystemId}
+          onChangeDefaultDesignSystem={handleChangeDefaultDesignSystem}
+          onDesignSystemsRefresh={refreshDesignSystems}
+          onUseDesignSystem={handleUseDesignSystem}
         />
       ) : (
         <EntryView
@@ -903,6 +1017,7 @@ export function App() {
           onOpenLiveArtifact={handleOpenLiveArtifact}
           onDeleteProject={handleDeleteProject}
           onChangeDefaultDesignSystem={handleChangeDefaultDesignSystem}
+          onDesignSystemsRefresh={refreshDesignSystems}
           onPersistComposioKey={handleConfigPersistComposioKey}
           onOpenSettings={openSettings}
         />

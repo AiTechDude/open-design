@@ -78,6 +78,20 @@ type ProjectTemplate = { name: string; description?: string | null; files: Array
 
 export const BASE_SYSTEM_PROMPT = OFFICIAL_DESIGNER_PROMPT;
 
+const ACTIVE_DESIGN_SYSTEM_VISUAL_DIRECTION_OVERRIDE = `
+
+---
+
+## Active design system visual direction
+
+The active design system is the visual direction for this project. Use its DESIGN.md palette, typography, spacing, component rules, and theme tokens as the source of truth for color and mood.
+
+- Do not ask the user to pick a separate theme color, visual direction, palette, typography mood, or direction card.
+- Do not emit \`<question-form id="direction">\`, \`direction-cards\`, or a "Pick a visual direction" card while an active design system is present.
+- If an earlier discovery answer asks to "Pick a direction for me", treat that as already satisfied by the active design system and continue with the plan.
+- When a downstream framework mentions "active direction" or "theme tokens", bind those fields from the active design system instead of the built-in direction library.
+`;
+
 export interface ComposeInput {
   agentId?: string | null | undefined;
   includeCodexImagegenOverride?: boolean | undefined;
@@ -164,6 +178,7 @@ export function composeSystemPrompt({
   pluginBlock,
   activeStageBlocks,
 }: ComposeInput): string {
+  const activeDesignSystemBody = designSystemBody?.trim();
   // Discovery + philosophy goes FIRST so its hard rules ("emit a form on
   // turn 1", "branch on brand on turn 2", "TodoWrite on turn 3", run
   // checklist + critique before <artifact>) win precedence over softer
@@ -174,9 +189,9 @@ export function composeSystemPrompt({
     BASE_SYSTEM_PROMPT,
   ];
 
-  if (designSystemBody && designSystemBody.trim().length > 0) {
+  if (activeDesignSystemBody && activeDesignSystemBody.length > 0) {
     parts.push(
-      `\n\n## Active design system${designSystemTitle ? ` — ${designSystemTitle}` : ''}\n\nTreat the following DESIGN.md as authoritative for color, typography, spacing, and component rules. Do not invent tokens outside this palette. When you copy the active skill's seed template, bind these tokens into its \`:root\` block before generating any layout.\n\n${designSystemBody.trim()}`,
+      `\n\n## Active design system${designSystemTitle ? ` — ${designSystemTitle}` : ''}\n\nTreat the following DESIGN.md as authoritative for color, typography, spacing, and component rules. If additional design-system project files are included below, use them as supporting context for previews, assets, implementation examples, and generated UI kits, while DESIGN.md remains the source of truth for tokens and rules. Do not invent tokens outside this palette. When you copy the active skill's seed template, bind these tokens into its \`:root\` block before generating any layout.\n\n${activeDesignSystemBody}`,
     );
   }
 
@@ -289,6 +304,10 @@ export function composeSystemPrompt({
   const cfg = critique ?? defaultCritiqueConfig();
   if (cfg.enabled && critiqueBrand && critiqueSkill && !isMediaSurface) {
     parts.push('\n\n' + renderPanelPrompt({ cfg, brand: critiqueBrand, skill: critiqueSkill }));
+  }
+
+  if (activeDesignSystemBody && activeDesignSystemBody.length > 0) {
+    parts.push(ACTIVE_DESIGN_SYSTEM_VISUAL_DIRECTION_OVERRIDE);
   }
 
   const mcpDirective = renderConnectedExternalMcpDirective(connectedExternalMcp);

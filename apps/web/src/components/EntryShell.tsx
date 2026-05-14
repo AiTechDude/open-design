@@ -31,7 +31,6 @@ import type {
 import { apiProtocolLabel } from '../utils/apiProtocol';
 import { CenteredLoader } from './Loading';
 import { DesignsTab } from './DesignsTab';
-import { DesignSystemPreviewModal } from './DesignSystemPreviewModal';
 import { DesignSystemsTab } from './DesignSystemsTab';
 import { EntryNavRail, type EntryView as EntryViewKind } from './EntryNavRail';
 import { GithubStarBadge } from './GithubStarBadge';
@@ -187,6 +186,7 @@ interface Props {
   onOpenLiveArtifact: (projectId: string, artifactId: string) => void;
   onDeleteProject: (id: string) => void;
   onChangeDefaultDesignSystem: (id: string) => void;
+  onDesignSystemsRefresh?: () => Promise<void> | void;
   onPersistComposioKey: (composio: AppConfig['composio']) => Promise<void> | void;
   onOpenSettings: (
     section?:
@@ -236,6 +236,7 @@ export function EntryShell({
   onOpenLiveArtifact,
   onDeleteProject,
   onChangeDefaultDesignSystem,
+  onDesignSystemsRefresh,
   onPersistComposioKey,
   onOpenSettings,
 }: Props) {
@@ -247,7 +248,6 @@ export function EntryShell({
   // view from the route rather than keeping it in component state.
   const route = useRoute();
   const view: EntryViewKind = route.kind === 'home' ? route.view : 'home';
-  const [previewSystemId, setPreviewSystemId] = useState<string | null>(null);
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [languageExpanded, setLanguageExpanded] = useState(false);
   const [appearanceExpanded, setAppearanceExpanded] = useState(false);
@@ -287,11 +287,6 @@ export function EntryShell({
     setIntegrationTab(tab);
     changeView('integrations');
   }
-
-  const previewSystem = useMemo(
-    () => (previewSystemId ? designSystems.find((d) => d.id === previewSystemId) ?? null : null),
-    [designSystems, previewSystemId],
-  );
 
   function handleCreate(input: CreateInput) {
     // The NewProjectModal no longer asks the user to pick a plugin.
@@ -732,7 +727,9 @@ export function EntryShell({
                     systems={designSystems}
                     selectedId={defaultDesignSystemId}
                     onSelect={onChangeDefaultDesignSystem}
-                    onPreview={(id) => setPreviewSystemId(id)}
+                    onCreate={() => navigate({ kind: 'design-system-create' })}
+                    onOpenSystem={(id) => navigate({ kind: 'design-system-detail', designSystemId: id })}
+                    onSystemsRefresh={onDesignSystemsRefresh}
                   />
                 </div>
               )
@@ -748,12 +745,6 @@ export function EntryShell({
           </div>
         </main>
       </div>
-      {previewSystem ? (
-        <DesignSystemPreviewModal
-          system={previewSystem}
-          onClose={() => setPreviewSystemId(null)}
-        />
-      ) : null}
       <NewProjectModal
         open={newProjectOpen}
         skills={skills}

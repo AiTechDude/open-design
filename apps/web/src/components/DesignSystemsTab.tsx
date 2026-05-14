@@ -1,304 +1,197 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useI18n } from '../i18n';
-import {
-  localizeDesignSystemCategory,
-  localizeDesignSystemSummary,
-} from '../i18n/content';
-import { fetchDesignSystemShowcase } from '../providers/registry';
-import { buildSrcdoc } from '../runtime/srcdoc';
-import type { DesignSystemSummary, Surface } from '../types';
+import { useMemo, useState } from 'react';
+import { deleteDesignSystemDraft, updateDesignSystemDraft } from '../providers/registry';
+import type { DesignSystemSummary } from '../types';
+import { Icon } from './Icon';
 
 interface Props {
   systems: DesignSystemSummary[];
   selectedId: string | null;
   onSelect: (id: string) => void;
-  onPreview: (id: string) => void;
+  onCreate: () => void;
+  onOpenSystem: (id: string) => void;
+  onSystemsRefresh?: () => Promise<void> | void;
 }
 
-const CATEGORY_ORDER = [
-  'Starter',
-  'AI & LLM',
-  'Developer Tools',
-  'Productivity & SaaS',
-  'Backend & Data',
-  'Design & Creative',
-  'Fintech & Crypto',
-  'E-Commerce & Retail',
-  'Media & Consumer',
-  'Automotive',
-];
+type ListFilter = 'all' | 'published' | 'draft';
 
-type SurfaceFilter = 'all' | Surface;
-
-const SURFACE_PILLS: { value: SurfaceFilter; labelKey: 'examples.modeAll' | 'ds.surfaceWeb' | 'ds.surfaceImage' | 'ds.surfaceVideo' | 'ds.surfaceAudio' }[] = [
-  { value: 'all', labelKey: 'examples.modeAll' },
-  { value: 'web', labelKey: 'ds.surfaceWeb' },
-  { value: 'image', labelKey: 'ds.surfaceImage' },
-  { value: 'video', labelKey: 'ds.surfaceVideo' },
-  { value: 'audio', labelKey: 'ds.surfaceAudio' },
-];
-
-function surfaceOf(system: DesignSystemSummary): Surface {
-  return system.surface ?? 'web';
+function isUserSystem(system: DesignSystemSummary): boolean {
+  return system.source === 'user' || system.isEditable === true;
 }
 
-export function DesignSystemsTab({ systems, selectedId, onSelect, onPreview }: Props) {
-  const { locale, t } = useI18n();
-  const [filter, setFilter] = useState('');
-  const [surfaceFilter, setSurfaceFilter] = useState<SurfaceFilter>('all');
-  const [category, setCategory] = useState<string>('All');
-  // Cache fetched showcase HTML across re-renders so cards never re-flicker
-  // when the user filters / scrolls back. null = "in flight"; undefined =
-  // "not yet requested". Mirrors the pattern used by ExamplesTab.
-  const [thumbs, setThumbs] = useState<Record<string, string | null>>({});
+function formatShortDate(value: string | undefined): string {
+  if (!value) return 'just now';
+  const time = Date.parse(value);
+  if (!Number.isFinite(time)) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(time));
+}
 
-  const surfaceScoped = useMemo(
-    () => surfaceFilter === 'all' ? systems : systems.filter((s) => surfaceOf(s) === surfaceFilter),
-    [systems, surfaceFilter],
-  );
+export function DesignSystemsTab({
+  systems,
+  selectedId,
+  onSelect,
+  onCreate,
+  onOpenSystem,
+  onSystemsRefresh,
+}: Props) {
+  const [filter, setFilter] = useState<ListFilter>('all');
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const surfaceCounts = useMemo(() => {
-    const counts: Record<SurfaceFilter, number> = { all: systems.length, web: 0, image: 0, video: 0, audio: 0 };
-    for (const s of systems) counts[surfaceOf(s)]++;
-    return counts;
-  }, [systems]);
+  const userSystems = useMemo(() => {
+    const editable = systems.filter(isUserSystem);
+    if (filter === 'all') return editable;
+    return editable.filter((system) => (system.status ?? 'draft') === filter);
+  }, [systems, filter]);
 
-  const categories = useMemo(() => {
-    const cats = new Set<string>();
-    for (const s of surfaceScoped) cats.add(s.category || 'Uncategorized');
-    const ordered: string[] = [];
-    for (const c of CATEGORY_ORDER) if (cats.has(c)) ordered.push(c);
-    for (const c of [...cats].sort()) if (!ordered.includes(c)) ordered.push(c);
-    return ['All', ...ordered];
-  }, [surfaceScoped]);
+  async function refreshSystems() {
+    await onSystemsRefresh?.();
+  }
 
-  const filtered = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return surfaceScoped.filter((s) => {
-      if (category !== 'All' && (s.category || 'Uncategorized') !== category) return false;
-      if (!q) return true;
-      const summary = localizeDesignSystemSummary(locale, s).toLowerCase();
-      const categoryLabel = localizeDesignSystemCategory(
-        locale,
-        s.category || 'Uncategorized',
-      ).toLowerCase();
-      return (
-        s.title.toLowerCase().includes(q) ||
-        s.summary.toLowerCase().includes(q) ||
-        summary.includes(q) ||
-        categoryLabel.includes(q)
-      );
-    });
-  }, [surfaceScoped, filter, category, locale]);
-
-  // Category metadata is authored in English; keep raw values in state for
-  // filtering while localizing the visible labels for the current UI locale.
-  const renderCategory = (c: string) => {
-    if (c === 'All') return t('ds.categoryAll');
-    if (c === 'Uncategorized') return t('ds.categoryUncategorized');
-    return localizeDesignSystemCategory(locale, c);
-  };
-
-  function loadThumb(id: string) {
-    setThumbs((prev) => {
-      if (prev[id] !== undefined) return prev;
-      void fetchDesignSystemShowcase(id).then((html) => {
-        setThumbs((p) => ({ ...p, [id]: html }));
+  async function togglePublished(system: DesignSystemSummary) {
+    setBusyId(system.id);
+    try {
+      await updateDesignSystemDraft(system.id, {
+        status: system.status === 'published' ? 'draft' : 'published',
       });
-      return { ...prev, [id]: null };
-    });
+      await refreshSystems();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function deleteSystem(system: DesignSystemSummary) {
+    const ok = window.confirm(`Delete "${system.title}"? This removes the draft design system from this device.`);
+    if (!ok) return;
+    setBusyId(system.id);
+    try {
+      const deleted = await deleteDesignSystemDraft(system.id);
+      if (!deleted) return;
+      if (selectedId === system.id) {
+        const fallback = systems.find((s) => s.id !== system.id && isUserSystem(s));
+        if (fallback) onSelect(fallback.id);
+      }
+      await refreshSystems();
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
-    <div className="tab-panel">
-      <div className="tab-panel-toolbar">
-        <input
-          placeholder={t('ds.searchPlaceholder')}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-        <select value={category} onChange={(e) => setCategory(e.target.value)}>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {renderCategory(c)}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div
-        className="examples-filter-row"
-        role="tablist"
-        aria-label={t('ds.surfaceLabel')}
-      >
-        <span className="examples-filter-label">{t('ds.surfaceLabel')}</span>
-        {SURFACE_PILLS.map((p) => (
-          <button
-            key={p.value}
-            type="button"
-            role="tab"
-            aria-selected={surfaceFilter === p.value}
-            className={`filter-pill ${surfaceFilter === p.value ? 'active' : ''}`}
-            onClick={() => {
-              setSurfaceFilter(p.value);
-              setCategory('All');
-            }}
+    <div className="tab-panel ds-settings-page">
+      <section className="ds-settings-card" aria-label="Design Systems">
+        <div className="ds-settings-card__head">
+          <div>
+            <span className="ds-manager-eyebrow">Design Systems</span>
+            <h2>Design systems</h2>
+          </div>
+          <select
+            aria-label="Filter design systems"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value as ListFilter)}
           >
-            {t(p.labelKey)}
-            <span className="filter-pill-count">{surfaceCounts[p.value]}</span>
-          </button>
-        ))}
-      </div>
-      {filtered.length === 0 ? (
-        <div className="tab-empty">{t('ds.emptyNoMatch')}</div>
-      ) : (
-        <div className="ds-grid">
-          {filtered.map((s) => (
-            <DesignSystemCard
-              key={s.id}
-              system={s}
-              active={s.id === selectedId}
-              thumbHtml={thumbs[s.id]}
-              onIntersect={() => loadThumb(s.id)}
-              onSelect={() => onSelect(s.id)}
-              onPreview={() => onPreview(s.id)}
-            />
-          ))}
+            <option value="all">All</option>
+            <option value="published">Published</option>
+            <option value="draft">Draft</option>
+          </select>
         </div>
-      )}
-    </div>
-  );
-}
 
-interface CardProps {
-  system: DesignSystemSummary;
-  active: boolean;
-  thumbHtml: string | null | undefined;
-  onIntersect: () => void;
-  onSelect: () => void;
-  onPreview: () => void;
-}
+        <button type="button" className="ds-create-row" onClick={onCreate}>
+          <span>
+            <strong>Create new design system</strong>
+            <small>Teach Open Design your brand, product, code, assets, and design references.</small>
+          </span>
+          <span className="ds-create-row__action">Create</span>
+        </button>
 
-function DesignSystemCard({
-  system,
-  active,
-  thumbHtml,
-  onIntersect,
-  onSelect,
-  onPreview,
-}: CardProps) {
-  const { locale, t } = useI18n();
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  // Lazy-load the showcase iframe only when the card scrolls into the
-  // viewport. With ~120 design systems we can't afford to mount every
-  // iframe up front — even with `loading="lazy"`, srcDoc iframes ignore
-  // the native lazy hint, so we gate via IntersectionObserver.
-  useEffect(() => {
-    if (thumbHtml !== undefined) return;
-    const node = ref.current;
-    if (!node || typeof IntersectionObserver === 'undefined') {
-      onIntersect();
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            onIntersect();
-            observer.disconnect();
-            break;
-          }
-        }
-      },
-      { rootMargin: '200px' },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [thumbHtml, onIntersect]);
-
-  const localizedSummary = localizeDesignSystemSummary(locale, system);
-  const categoryLabel = localizeDesignSystemCategory(
-    locale,
-    system.category || 'Uncategorized',
-  );
-
-  return (
-    <div
-      ref={ref}
-      className={`ds-card ${active ? 'active' : ''}`}
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-    >
-      <div
-        className="ds-card-thumb"
-        onClick={(e) => {
-          e.stopPropagation();
-          onPreview();
-        }}
-        title={t('ds.previewTitle')}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            e.stopPropagation();
-            onPreview();
-          }
-        }}
-      >
-        {thumbHtml ? (
-          <iframe
-            title={`${system.title} preview`}
-            sandbox="allow-scripts"
-            srcDoc={buildSrcdoc(thumbHtml)}
-            tabIndex={-1}
-            aria-hidden
-          />
+        {userSystems.length === 0 ? (
+          <div className="ds-user-empty">
+            No design systems yet. Create one from real product context, review the draft, then publish it for future projects.
+          </div>
         ) : (
-          <div className="ds-card-thumb-fallback" aria-hidden>
-            {system.swatches && system.swatches.length > 0 ? (
-              <div className="ds-card-thumb-swatches">
-                {system.swatches.map((c, i) => (
-                  <span key={i} style={{ background: c }} />
-                ))}
-              </div>
-            ) : (
-              <span className="ds-card-thumb-placeholder">
-                {thumbHtml === null ? '' : ''}
-              </span>
-            )}
+          <div className="ds-user-list">
+            {userSystems.map((system) => {
+              const status = system.status ?? 'draft';
+              const canUseInProjects = status === 'published';
+              const selected = canUseInProjects && system.id === selectedId;
+              const busy = busyId === system.id;
+              return (
+                <div className="ds-user-row" key={system.id}>
+                  <button
+                    type="button"
+                    className="ds-user-row__open"
+                    onClick={() => onOpenSystem(system.id)}
+                  >
+                    <span className="ds-user-row__title">
+                      <span>{system.title}</span>
+                      {selected ? <span className="ds-card-badge">Default</span> : null}
+                    </span>
+                    <span className="ds-user-row__meta">
+                      You · updated {formatShortDate(system.updatedAt)}
+                    </span>
+                  </button>
+                  <div className="ds-user-row__actions">
+                    {!selected && canUseInProjects ? (
+                      <button
+                        type="button"
+                        className="ghost compact"
+                        onClick={() => onSelect(system.id)}
+                        disabled={busy}
+                      >
+                        Make default
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={`ds-status-toggle ${status === 'published' ? 'is-on' : ''}`}
+                      aria-pressed={status === 'published'}
+                      onClick={() => void togglePublished(system)}
+                      disabled={busy}
+                    >
+                      <span>{status === 'published' ? 'Published' : 'Draft'}</span>
+                      <i aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      aria-label={`Open ${system.title}`}
+                      onClick={() => onOpenSystem(system.id)}
+                    >
+                      <Icon name="external-link" />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn danger"
+                      aria-label={`Delete ${system.title}`}
+                      onClick={() => void deleteSystem(system)}
+                      disabled={busy}
+                    >
+                      <Icon name="close" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
-        <span className="ds-card-thumb-overlay" aria-hidden>
-          {t('ds.preview')}
-        </span>
-      </div>
-      <div className="ds-card-meta">
-        <div className="ds-card-title-row">
-          <span className="ds-card-title">{system.title}</span>
-          {active ? (
-            <span className="ds-card-badge">{t('ds.badgeDefault')}</span>
-          ) : null}
+      </section>
+
+      <section className="ds-settings-card ds-templates-card" aria-label="Templates">
+        <div className="ds-settings-card__head">
+          <div>
+            <span className="ds-manager-eyebrow">Templates</span>
+            <h2>Templates</h2>
+          </div>
         </div>
-        <div className="ds-card-summary">{localizedSummary}</div>
-        <div className="ds-card-footer">
-          <span className="ds-card-category">{categoryLabel}</span>
-          {system.swatches && system.swatches.length > 0 ? (
-            <div className="ds-card-swatches" aria-hidden>
-              {system.swatches.map((c, i) => (
-                <span key={i} style={{ background: c }} title={c} />
-              ))}
-            </div>
-          ) : null}
+        <div className="ds-user-empty">
+          No templates yet. Create one from any generated project via Share once template publishing is enabled.
         </div>
-      </div>
+      </section>
+
+      <p className="ds-private-note">Only you can view these settings.</p>
     </div>
   );
 }

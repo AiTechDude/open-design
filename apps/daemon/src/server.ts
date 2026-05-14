@@ -41,7 +41,19 @@ import { validateLinkedDirs } from './linked-dirs.js';
 import { buildWindowsFolderDialogCommand, parseFolderDialogStdout } from './native-folder-dialog.js';
 import { listCodexPets, readCodexPetSpritesheet } from './codex-pets.js';
 import { syncCommunityPets } from './community-pets-sync.js';
-import { listDesignSystems, readDesignSystem } from './design-systems.js';
+import {
+  createUserDesignSystem,
+  deleteUserDesignSystem,
+  linkUserDesignSystemProject,
+  listDesignSystems,
+  listUserDesignSystemRevisions,
+  listUserDesignSystemFiles,
+  readDesignSystem,
+  readUserDesignSystemFile,
+  updateUserDesignSystemRevisionStatus,
+  updateUserDesignSystem,
+} from './design-systems.js';
+import { createDesignSystemGenerationJobStore } from './design-system-generation-jobs.js';
 import {
   applyDiffReviewDecisionToCwd,
   applyPlugin,
@@ -853,8 +865,275 @@ migrateLegacyDataDirSync({
 });
 const ARTIFACTS_DIR = path.join(RUNTIME_DATA_DIR, 'artifacts');
 const PROJECTS_DIR = path.join(RUNTIME_DATA_DIR, 'projects');
+const USER_DESIGN_SYSTEMS_DIR = path.join(RUNTIME_DATA_DIR, 'design-systems');
 fs.mkdirSync(PROJECTS_DIR, { recursive: true });
+fs.mkdirSync(USER_DESIGN_SYSTEMS_DIR, { recursive: true });
 const orbitService = new OrbitService(RUNTIME_DATA_DIR);
+const designSystemGenerationJobs = createDesignSystemGenerationJobStore({
+  root: USER_DESIGN_SYSTEMS_DIR,
+});
+
+async function listAvailableDesignSystems() {
+  const [bundled, user] = await Promise.all([
+    listDesignSystems(DESIGN_SYSTEMS_DIR, {
+      source: 'bundled',
+      isEditable: false,
+      defaultStatus: 'published',
+    }),
+    listDesignSystems(USER_DESIGN_SYSTEMS_DIR, {
+      idPrefix: 'user:',
+      source: 'user',
+      isEditable: true,
+      defaultStatus: 'draft',
+    }),
+  ]);
+  return [
+    ...user.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')),
+    ...bundled,
+  ];
+}
+
+async function readAvailableDesignSystem(id: string) {
+  if (typeof id === 'string' && id.startsWith('user:')) {
+    return readDesignSystem(USER_DESIGN_SYSTEMS_DIR, id, { idPrefix: 'user:' });
+  }
+  return readDesignSystem(DESIGN_SYSTEMS_DIR, id);
+}
+
+function isProjectUsableDesignSystem(summary) {
+  return summary?.status === 'published';
+}
+
+async function validateProjectDesignSystemId(id) {
+  if (id == null || id === '') return { ok: true, id: null };
+  if (typeof id !== 'string') {
+    return {
+      ok: false,
+      code: 'INVALID_DESIGN_SYSTEM',
+      message: 'designSystemId must be a string or null',
+    };
+  }
+  const systems = await listAvailableDesignSystems();
+  const summary = systems.find((system) => system.id === id);
+  if (!summary) {
+    return {
+      ok: false,
+      code: 'DESIGN_SYSTEM_NOT_FOUND',
+      message: 'design system not found',
+    };
+  }
+  if (!isProjectUsableDesignSystem(summary)) {
+    return {
+      ok: false,
+      code: 'DESIGN_SYSTEM_NOT_PUBLISHED',
+      message: 'draft design systems cannot be used by projects',
+    };
+  }
+  return { ok: true, id };
+}
+
+function userDesignSystemWorkspaceProjectId(id) {
+  if (typeof id !== 'string' || !id.startsWith('user:')) return null;
+  const dirId = id.slice('user:'.length);
+  if (!/^[A-Za-z0-9._-]{1,120}$/.test(dirId)) return null;
+  return `ds-${dirId}`.slice(0, 128);
+}
+
+function projectBackedDesignSystemProjectId(id, summary) {
+  if (typeof summary?.projectId === 'string' && isSafeId(summary.projectId)) {
+    return summary.projectId;
+  }
+  return userDesignSystemWorkspaceProjectId(id);
+}
+
+async function ensureUserDesignSystemWorkspaceProject(db, id) {
+  const systems = await listAvailableDesignSystems();
+  const summary = systems.find((s) => s.id === id && s.source === 'user');
+  if (!summary) return null;
+  const projectId = projectBackedDesignSystemProjectId(id, summary);
+  if (!projectId) return null;
+
+  const now = Date.now();
+  const metadata = {
+    kind: 'other',
+    importedFrom: 'design-system',
+    entryFile: 'DESIGN.md',
+    sourceFileName: id,
+  };
+  const existing = getProject(db, projectId);
+  const project = existing
+    ? updateProject(db, projectId, {
+        name: summary.title,
+        designSystemId: id,
+        metadata: { ...existing.metadata, ...metadata },
+        updatedAt: now,
+      })
+    : insertProject(db, {
+        id: projectId,
+        name: summary.title,
+        skillId: null,
+        designSystemId: id,
+        pendingPrompt: null,
+        metadata,
+        createdAt: now,
+        updatedAt: now,
+      });
+  if (!project) return null;
+
+  const files = await listUserDesignSystemFiles(USER_DESIGN_SYSTEMS_DIR, id);
+  if (!files) return null;
+  for (const file of files) {
+    if (file.kind === 'folder') continue;
+    const detail = await readUserDesignSystemFile(USER_DESIGN_SYSTEMS_DIR, id, file.path);
+    if (!detail) continue;
+    if (existing) {
+      try {
+        await readProjectFile(PROJECTS_DIR, projectId, detail.path, project.metadata);
+        continue;
+      } catch (err) {
+        if (!err || err.code !== 'ENOENT') throw err;
+      }
+    }
+    await writeProjectFile(
+      PROJECTS_DIR,
+      projectId,
+      detail.path,
+      Buffer.from(detail.content, 'utf8'),
+      {},
+      project.metadata,
+    );
+  }
+  await linkUserDesignSystemProject(USER_DESIGN_SYSTEMS_DIR, id, project.id);
+  const projectFiles = await listFiles(PROJECTS_DIR, projectId);
+  return { project, files: projectFiles };
+}
+
+const DESIGN_SYSTEM_CONTEXT_FILE_LIMIT = 18;
+const DESIGN_SYSTEM_CONTEXT_TOTAL_CHARS = 60000;
+const DESIGN_SYSTEM_CONTEXT_FILE_CHARS = 12000;
+const DESIGN_SYSTEM_CONTEXT_TEXT_EXTENSIONS = new Set([
+  '.css',
+  '.html',
+  '.js',
+  '.json',
+  '.jsx',
+  '.md',
+  '.svg',
+  '.ts',
+  '.tsx',
+  '.txt',
+]);
+
+async function readDesignSystemWorkspaceTextFile(db, summary, filePath) {
+  if (!summary?.projectId || !isSafeId(summary.projectId)) return null;
+  const project = getProject(db, summary.projectId);
+  if (!project) return null;
+  try {
+    const file = await readProjectFile(
+      PROJECTS_DIR,
+      project.id,
+      filePath,
+      project.metadata,
+    );
+    const text = file.buffer.toString('utf8');
+    if (looksBinaryText(text)) return null;
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+async function buildDesignSystemProjectContext(db, summary) {
+  if (!summary?.projectId || !isSafeId(summary.projectId)) return '';
+  const project = getProject(db, summary.projectId);
+  if (!project) return '';
+  let files = [];
+  try {
+    files = await listFiles(PROJECTS_DIR, project.id, { metadata: project.metadata });
+  } catch {
+    return '';
+  }
+  const candidates = files
+    .filter((file) => shouldIncludeDesignSystemContextFile(file))
+    .sort((a, b) => designSystemContextRank(a.path) - designSystemContextRank(b.path));
+  const blocks = [];
+  let remaining = DESIGN_SYSTEM_CONTEXT_TOTAL_CHARS;
+  for (const file of candidates) {
+    if (blocks.length >= DESIGN_SYSTEM_CONTEXT_FILE_LIMIT || remaining <= 0) break;
+    let detail;
+    try {
+      detail = await readProjectFile(PROJECTS_DIR, project.id, file.path, project.metadata);
+    } catch {
+      continue;
+    }
+    const raw = detail.buffer.toString('utf8');
+    if (looksBinaryText(raw)) continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const excerpt = trimmed.length > DESIGN_SYSTEM_CONTEXT_FILE_CHARS
+      ? `${trimmed.slice(0, DESIGN_SYSTEM_CONTEXT_FILE_CHARS)}\n\n[truncated]`
+      : trimmed;
+    const block = [
+      `### ${file.path}`,
+      `\`\`\`${fenceLanguageForPath(file.path)}`,
+      escapeMarkdownFence(excerpt),
+      '```',
+    ].join('\n');
+    if (block.length > remaining) break;
+    blocks.push(block);
+    remaining -= block.length;
+  }
+  if (blocks.length === 0) return '';
+  return [
+    `## Design system project context files`,
+    '',
+    `The selected design system is backed by OpenDesign project \`${project.id}\`. Use these project files as extra context alongside DESIGN.md, especially for generated previews, token CSS, skill notes, provenance, assets, and UI-kit examples.`,
+    '',
+    ...blocks,
+  ].join('\n');
+}
+
+function shouldIncludeDesignSystemContextFile(file) {
+  if (!file || file.type !== 'file' || typeof file.path !== 'string') return false;
+  if (file.path === 'DESIGN.md') return false;
+  if (file.path.endsWith('.artifact.json')) return false;
+  if (typeof file.size === 'number' && file.size > 250000) return false;
+  const ext = path.extname(file.path).toLowerCase();
+  return DESIGN_SYSTEM_CONTEXT_TEXT_EXTENSIONS.has(ext);
+}
+
+function designSystemContextRank(filePath) {
+  if (filePath === 'README.md') return 0;
+  if (filePath === 'SKILL.md') return 1;
+  if (filePath === 'colors_and_type.css') return 2;
+  if (filePath === 'package.json') return 3;
+  if (filePath.startsWith('context/')) return 4;
+  if (filePath.startsWith('preview/')) return 5;
+  if (filePath.startsWith('ui_kits/')) return 6;
+  if (filePath.startsWith('src/')) return 7;
+  if (filePath.startsWith('assets/')) return 8;
+  return 20;
+}
+
+function looksBinaryText(text) {
+  return text.includes('\0');
+}
+
+function fenceLanguageForPath(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.css') return 'css';
+  if (ext === '.html') return 'html';
+  if (ext === '.js' || ext === '.jsx') return 'javascript';
+  if (ext === '.json') return 'json';
+  if (ext === '.md') return 'markdown';
+  if (ext === '.svg') return 'xml';
+  if (ext === '.ts' || ext === '.tsx') return 'typescript';
+  return '';
+}
+
+function escapeMarkdownFence(text) {
+  return text.replace(/```/g, "'''");
+}
 
 // In-memory OAuth state cache. Lives for the daemon process's lifetime.
 // Maps the OAuth `state` parameter we generated in /api/mcp/oauth/start
@@ -2889,6 +3168,15 @@ export async function startServer({
       if (typeof name !== 'string' || !name.trim()) {
         return sendApiError(res, 400, 'BAD_REQUEST', 'name required');
       }
+      const designSystemValidation = await validateProjectDesignSystemId(designSystemId);
+      if (!designSystemValidation.ok) {
+        return sendApiError(
+          res,
+          400,
+          designSystemValidation.code,
+          designSystemValidation.message,
+        );
+      }
       // baseDir is privileged: it lets a project root directly inside the
       // user's filesystem. The /api/import/folder endpoint is the only
       // path that's allowed to set it, because that's where realpath() +
@@ -2910,7 +3198,7 @@ export async function startServer({
         id,
         name: name.trim(),
         skillId: skillId ?? null,
-        designSystemId: designSystemId ?? null,
+        designSystemId: designSystemValidation.id,
         pendingPrompt: pendingPrompt || null,
         metadata:
           metadata && typeof metadata === 'object'
@@ -3163,12 +3451,21 @@ export async function startServer({
           ? name.trim()
           : path.basename(normalizedPath);
       const entryFile = await detectEntryFile(normalizedPath);
+      const designSystemValidation = await validateProjectDesignSystemId(designSystemId);
+      if (!designSystemValidation.ok) {
+        return sendApiError(
+          res,
+          400,
+          designSystemValidation.code,
+          designSystemValidation.message,
+        );
+      }
 
       const project = insertProject(db, {
         id,
         name: projectName,
         skillId: skillId ?? null,
-        designSystemId: designSystemId ?? null,
+        designSystemId: designSystemValidation.id,
         pendingPrompt: null,
         metadata: {
           kind: 'prototype',
@@ -3206,7 +3503,7 @@ export async function startServer({
     res.json(body);
   });
 
-  app.patch('/api/projects/:id', (req, res) => {
+  app.patch('/api/projects/:id', async (req, res) => {
     try {
       const patch = req.body || {};
       // baseDir / folder-import state is privileged: it's set only by the
@@ -3254,6 +3551,18 @@ export async function startServer({
           return sendApiError(res, 400, 'INVALID_LINKED_DIR', validated.error);
         }
         patch.metadata.linkedDirs = validated.dirs;
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, 'designSystemId')) {
+        const designSystemValidation = await validateProjectDesignSystemId(patch.designSystemId);
+        if (!designSystemValidation.ok) {
+          return sendApiError(
+            res,
+            400,
+            designSystemValidation.code,
+            designSystemValidation.message,
+          );
+        }
+        patch.designSystemId = designSystemValidation.id;
       }
       const project = updateProject(db, req.params.id, patch);
       if (!project)
@@ -3682,7 +3991,7 @@ export async function startServer({
 
   app.get('/api/design-systems', async (_req, res) => {
     try {
-      const systems = await listDesignSystems(DESIGN_SYSTEMS_DIR);
+      const systems = await listAvailableDesignSystems();
       res.json({
         designSystems: systems.map(({ body, ...rest }) => rest),
       });
@@ -3691,12 +4000,161 @@ export async function startServer({
     }
   });
 
+  app.post('/api/design-systems', async (req, res) => {
+    try {
+      const created = await createUserDesignSystem(USER_DESIGN_SYSTEMS_DIR, req.body || {});
+      await ensureUserDesignSystemWorkspaceProject(db, created.id);
+      const systems = await listAvailableDesignSystems();
+      const detail = systems.find((s) => s.id === created.id) ?? created;
+      res.status(201).json({ ...detail, designSystem: detail });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  app.post('/api/design-systems/generation-jobs', async (req, res) => {
+    try {
+      const job = designSystemGenerationJobs.start(req.body || {});
+      res.status(202).json({ job });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  app.get('/api/design-systems/generation-jobs/:jobId', async (req, res) => {
+    try {
+      const job = designSystemGenerationJobs.get(req.params.jobId);
+      if (!job)
+        return res.status(404).json({ error: 'design system generation job not found' });
+      res.json({ job });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post('/api/design-systems/:id/revision-jobs', async (req, res) => {
+    try {
+      const feedback = typeof req.body?.feedback === 'string' ? req.body.feedback : '';
+      if (!feedback.trim()) return res.status(400).json({ error: 'feedback is required' });
+      const job = designSystemGenerationJobs.revise({
+        designSystemId: req.params.id,
+        feedback,
+        sectionTitle: typeof req.body?.sectionTitle === 'string' ? req.body.sectionTitle : undefined,
+        body: typeof req.body?.body === 'string' ? req.body.body : undefined,
+      });
+      res.status(202).json({ job });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  app.get('/api/design-systems/:id/revisions', async (req, res) => {
+    try {
+      const revisions = await listUserDesignSystemRevisions(
+        USER_DESIGN_SYSTEMS_DIR,
+        req.params.id,
+      );
+      if (!revisions)
+        return res.status(404).json({ error: 'editable design system not found' });
+      res.json({ revisions });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.patch('/api/design-systems/:id/revisions/:revisionId', async (req, res) => {
+    try {
+      const status = typeof req.body?.status === 'string' ? req.body.status : '';
+      if (status !== 'accepted' && status !== 'rejected')
+        return res.status(400).json({ error: 'status must be accepted or rejected' });
+      const revision = await updateUserDesignSystemRevisionStatus(
+        USER_DESIGN_SYSTEMS_DIR,
+        req.params.id,
+        req.params.revisionId,
+        status,
+      );
+      if (!revision)
+        return res.status(404).json({ error: 'design system revision not found' });
+      res.json({ revision });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
   app.get('/api/design-systems/:id', async (req, res) => {
     try {
-      const body = await readDesignSystem(DESIGN_SYSTEMS_DIR, req.params.id);
-      if (body === null)
+      const systems = await listAvailableDesignSystems();
+      const summary = systems.find((s) => s.id === req.params.id);
+      const projectBody = await readDesignSystemWorkspaceTextFile(db, summary, 'DESIGN.md');
+      const body = projectBody ?? await readAvailableDesignSystem(req.params.id);
+      if (body === null || !summary)
         return res.status(404).json({ error: 'design system not found' });
-      res.json({ id: req.params.id, body });
+      const detail = { ...summary, body };
+      res.json({ ...detail, designSystem: detail });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post('/api/design-systems/:id/workspace', async (req, res) => {
+    try {
+      const workspace = await ensureUserDesignSystemWorkspaceProject(db, req.params.id);
+      if (!workspace)
+        return res.status(404).json({ error: 'editable design system not found' });
+      res.status(201).json(workspace);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  app.get('/api/design-systems/:id/files', async (req, res) => {
+    try {
+      const files = await listUserDesignSystemFiles(USER_DESIGN_SYSTEMS_DIR, req.params.id);
+      if (!files)
+        return res.status(404).json({ error: 'editable design system not found' });
+      res.json({ files });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get('/api/design-systems/:id/file', async (req, res) => {
+    try {
+      const requestedPath = typeof req.query.path === 'string' ? req.query.path : '';
+      const file = await readUserDesignSystemFile(
+        USER_DESIGN_SYSTEMS_DIR,
+        req.params.id,
+        requestedPath,
+      );
+      if (!file)
+        return res.status(404).json({ error: 'design system file not found' });
+      res.json({ file });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.patch('/api/design-systems/:id', async (req, res) => {
+    try {
+      const updated = await updateUserDesignSystem(
+        USER_DESIGN_SYSTEMS_DIR,
+        req.params.id,
+        req.body || {},
+      );
+      if (!updated)
+        return res.status(404).json({ error: 'editable design system not found' });
+      res.json({ ...updated, designSystem: updated });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  app.delete('/api/design-systems/:id', async (req, res) => {
+    try {
+      const ok = await deleteUserDesignSystem(USER_DESIGN_SYSTEMS_DIR, req.params.id);
+      if (!ok)
+        return res.status(404).json({ error: 'editable design system not found' });
+      res.status(204).end();
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
@@ -4011,7 +4469,7 @@ export async function startServer({
   async function loadPluginRegistryView() {
     const [skills, designSystems] = await Promise.all([
       listSkills(SKILLS_DIR),
-      listDesignSystems(DESIGN_SYSTEMS_DIR),
+      listAvailableDesignSystems(),
     ]);
     // Spec §23.3.3: surface the bundled scenario plugins so apply()
     // can fall back to the matching scenario's pipeline when the
@@ -5157,7 +5615,7 @@ export async function startServer({
   // file shows up on the next view, no rebuild needed.
   app.get('/api/design-systems/:id/preview', async (req, res) => {
     try {
-      const body = await readDesignSystem(DESIGN_SYSTEMS_DIR, req.params.id);
+      const body = await readAvailableDesignSystem(req.params.id);
       if (body === null)
         return res.status(404).type('text/plain').send('not found');
       const html = renderDesignSystemPreview(req.params.id, body);
@@ -5172,7 +5630,7 @@ export async function startServer({
   // /preview: built at request time, no caching.
   app.get('/api/design-systems/:id/showcase', async (req, res) => {
     try {
-      const body = await readDesignSystem(DESIGN_SYSTEMS_DIR, req.params.id);
+      const body = await readAvailableDesignSystem(req.params.id);
       if (body === null)
         return res.status(404).type('text/plain').send('not found');
       const html = renderDesignSystemShowcase(req.params.id, body);
@@ -7051,12 +7509,26 @@ export async function startServer({
     let designSystemBody;
     let designSystemTitle;
     if (effectiveDesignSystemId) {
-      const systems = await listDesignSystems(DESIGN_SYSTEMS_DIR);
-      const summary = systems.find((s) => s.id === effectiveDesignSystemId);
-      designSystemTitle = summary?.title;
-      designSystemBody =
-        (await readDesignSystem(DESIGN_SYSTEMS_DIR, effectiveDesignSystemId)) ??
-        undefined;
+      let systems = await listAvailableDesignSystems();
+      let summary = systems.find((s) => s.id === effectiveDesignSystemId);
+      if (summary?.source === 'user') {
+        await ensureUserDesignSystemWorkspaceProject(db, effectiveDesignSystemId);
+        systems = await listAvailableDesignSystems();
+        summary = systems.find((s) => s.id === effectiveDesignSystemId);
+      }
+      const editingOwnDraftDesignSystem =
+        project?.metadata?.importedFrom === 'design-system'
+        && project.designSystemId === effectiveDesignSystemId;
+      if (summary && (isProjectUsableDesignSystem(summary) || editingOwnDraftDesignSystem)) {
+        designSystemTitle = summary.title;
+        const workspaceBody = await readDesignSystemWorkspaceTextFile(db, summary, 'DESIGN.md');
+        const registryBody = await readAvailableDesignSystem(effectiveDesignSystemId);
+        const projectContext = await buildDesignSystemProjectContext(db, summary);
+        const baseBody = workspaceBody ?? registryBody;
+        designSystemBody = baseBody
+          ? [baseBody.trim(), projectContext.trim()].filter(Boolean).join('\n\n')
+          : projectContext.trim() || undefined;
+      }
     }
 
     const template =
@@ -8292,9 +8764,12 @@ export async function startServer({
     const assistantMessageId = `orbit-assistant-${randomUUID()}`;
     const projectName = `Orbit · ${formatLocalProjectTimestamp(startedAt)}`;
 
-    const orbitDesignSystemId = template?.designSystemRequired === false
-      ? null
-      : appConfig.designSystemId ?? null;
+    const orbitDesignSystemValidation = template?.designSystemRequired === false
+      ? { ok: true, id: null }
+      : await validateProjectDesignSystemId(appConfig.designSystemId ?? null);
+    const orbitDesignSystemId = orbitDesignSystemValidation.ok
+      ? orbitDesignSystemValidation.id
+      : null;
 
     insertProject(db, {
       id: projectId,

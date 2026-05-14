@@ -47,6 +47,15 @@ const EXAMPLE_PROMPT_KEYS: Array<{
     promptKey: 'chat.example3Prompt',
   },
 ];
+const DESIGN_SYSTEM_CREATION_PROMPT_PREFIX =
+  'Create this project as a complete Open Design design system workspace.';
+
+interface DesignSystemCreationPromptBrief {
+  company: string | null;
+  resources: string[];
+  manifestPath: string | null;
+  markdown: string;
+}
 
 interface Props {
   messages: ChatMessage[];
@@ -70,6 +79,7 @@ interface Props {
   // produced-file chips all call this.
   onRequestOpenFile?: (name: string) => void;
   initialDraft?: string;
+  draftCommand?: { id: string; text: string } | null;
   // Question-form submissions become a normal user message; the parent
   // routes that text through onSend (no attachments).
   onSubmitForm?: (text: string) => void;
@@ -97,6 +107,7 @@ interface Props {
   onTogglePet?: () => void;
   onOpenPetSettings?: () => void;
   projectMetadata?: ProjectMetadata;
+  hasActiveDesignSystem?: boolean;
   onProjectMetadataChange?: (metadata: ProjectMetadata) => void;
   currentSkillId?: string | null;
   onProjectSkillChange?: (skillId: string | null) => void;
@@ -128,6 +139,7 @@ export function ChatPane({
   onStop,
   onRequestOpenFile,
   initialDraft,
+  draftCommand = null,
   onSubmitForm,
   onContinueRemainingTasks,
   onNewConversation,
@@ -143,6 +155,7 @@ export function ChatPane({
   onTogglePet,
   onOpenPetSettings,
   projectMetadata,
+  hasActiveDesignSystem = false,
   onProjectMetadataChange,
   currentSkillId = null,
   onProjectSkillChange,
@@ -203,6 +216,13 @@ export function ChatPane({
       composerRef.current?.setDraft('');
     }
   }, [initialDraft]);
+  const lastDraftCommandRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!draftCommand || draftCommand.id === lastDraftCommandRef.current) return;
+    lastDraftCommandRef.current = draftCommand.id;
+    composerRef.current?.setDraft(draftCommand.text);
+    composerRef.current?.focus();
+  }, [draftCommand]);
 
   useEffect(() => {
     const el = logRef.current;
@@ -511,6 +531,7 @@ export function ChatPane({
                         onRequestOpenFile={onRequestOpenFile}
                         isLast={m.id === lastAssistantId}
                         nextUserContent={nextUserContentByAssistantId.get(m.id)}
+                        suppressDirectionForms={hasActiveDesignSystem}
                         onSubmitForm={onSubmitForm}
                         onContinueRemainingTasks={
                           m.id === lastAssistantId && onContinueRemainingTasks
@@ -842,9 +863,104 @@ function UserMessage({
           ))}
         </div>
       ) : null}
-      {message.content ? <div className="user-text">{message.content}</div> : null}
+      {message.content ? (
+        isDesignSystemCreationPrompt(message.content) ? (
+          <DesignSystemCreationPromptSummary content={message.content} />
+        ) : (
+          <div className="user-text">{message.content}</div>
+        )
+      ) : null}
     </div>
   );
+}
+
+function DesignSystemCreationPromptSummary({ content }: { content: string }) {
+  const brief = summarizeDesignSystemCreationPrompt(content);
+  return (
+    <div className="user-design-system-brief">
+      <span className="user-design-system-brief__pill">
+        <Icon name="palette" size={13} />
+        Create design system
+      </span>
+      <div className="user-design-system-brief__body">
+        <strong>Design-system setup brief</strong>
+        <ul>
+          {brief.company ? (
+            <li>
+              <span>Company</span>
+              <b>{brief.company}</b>
+            </li>
+          ) : null}
+          {brief.resources.length > 0 ? (
+            <li>
+              <span>Resources</span>
+              <b>{brief.resources.join(' · ')}</b>
+            </li>
+          ) : null}
+          {brief.manifestPath ? (
+            <li>
+              <span>Source manifest</span>
+              <code>{brief.manifestPath}</code>
+            </li>
+          ) : null}
+          <li>
+            <span>Output</span>
+            <b>DESIGN.md, tokens, previews, UI kit, assets</b>
+          </li>
+        </ul>
+      </div>
+      <details className="user-design-system-brief__details">
+        <summary>Setup markdown</summary>
+        <pre>{brief.markdown}</pre>
+      </details>
+    </div>
+  );
+}
+
+function isDesignSystemCreationPrompt(content: string): boolean {
+  return content.trimStart().startsWith(DESIGN_SYSTEM_CREATION_PROMPT_PREFIX);
+}
+
+function summarizeDesignSystemCreationPrompt(content: string): DesignSystemCreationPromptBrief {
+  const companyBlock = matchPromptBlock(
+    content,
+    /Company \/ design system context:\n([\s\S]*?)(?:\n\nSource context manifest:|\n\nProvided resources:|\n\nGitHub connector intake|$)/,
+  );
+  const company = companyBlock ? companyBlock.replace(/\s+/g, ' ') : null;
+  const resourceBlock = matchPromptBlock(
+    content,
+    /Provided resources:\n([\s\S]*?)(?:\n+GitHub connector intake|\n+Create or update|$)/,
+  );
+  const resources = resourceBlock
+    ? resourceBlock
+      .split('\n')
+      .map((line) => line.replace(/^[-*]\s*/, '').trim())
+      .filter(Boolean)
+      .slice(0, 4)
+    : [];
+  const manifestPath =
+    content.match(/Read `([^`]+)` before drafting/)?.[1] ??
+    content.match(/Source context manifest:\s*`([^`]+)`/)?.[1] ??
+    null;
+  const markdownLines = [
+    '### Create design system',
+    company ? `- Company: ${company}` : null,
+    resources.length > 0 ? `- Resources: ${resources.join('; ')}` : null,
+    manifestPath ? `- Source manifest: \`${manifestPath}\`` : null,
+    '- Output: `DESIGN.md`, `colors_and_type.css`, `preview/`, `ui_kits/`, `assets/`',
+  ].filter((line): line is string => Boolean(line));
+  return {
+    company,
+    resources,
+    manifestPath,
+    markdown: markdownLines.join('\n'),
+  };
+}
+
+function matchPromptBlock(content: string, pattern: RegExp): string | null {
+  const match = content.match(pattern);
+  const value = match?.[1]?.trim();
+  return value || null;
 }
 
 // Context chip rendered above a user message when the project pinned a

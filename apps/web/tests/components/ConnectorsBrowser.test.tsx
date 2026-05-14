@@ -418,7 +418,7 @@ describe('ConnectorsBrowser', () => {
     ).toHaveProperty('github');
   });
 
-  it('does not mark failed OAuth launches as pending authorization', async () => {
+  it('keeps OAuth pending when the automatic popup is blocked', async () => {
     const availableConnector: ConnectorDetail = {
       ...configuredComposioConnector,
       status: 'available',
@@ -432,7 +432,7 @@ describe('ConnectorsBrowser', () => {
       auth: {
         kind: 'redirect_required',
         redirectUrl: 'https://example.com/oauth',
-        expiresAt: '2026-05-08T10:00:00.000Z',
+        expiresAt: '2099-05-08T10:00:00.000Z',
       },
       error: 'Popup blocked. Allow popups for Open Design and try again.',
     });
@@ -443,10 +443,9 @@ describe('ConnectorsBrowser', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
 
     await waitFor(() => expect(connectConnector).toHaveBeenCalledWith('github'));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Connect' })).toBeTruthy());
-    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
+    await screen.findByRole('button', { name: 'Cancel' });
     expect(
       JSON.parse(window.sessionStorage.getItem('od-connectors-authorization-pending') ?? '{}'),
-    ).not.toHaveProperty('github');
+    ).toHaveProperty('github');
   });
 });

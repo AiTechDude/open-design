@@ -40,6 +40,7 @@ interface Props {
   // any). Used to detect that a form was already answered so we can
   // render its locked state with the user's picks visible.
   nextUserContent?: string;
+  suppressDirectionForms?: boolean;
   // Submit handler the form fires when the user picks answers — opaque
   // to AssistantMessage; ProjectView wires it into onSend.
   onSubmitForm?: (text: string) => void;
@@ -63,6 +64,7 @@ export function AssistantMessage({
   onRequestOpenFile,
   isLast,
   nextUserContent,
+  suppressDirectionForms = false,
   onSubmitForm,
   onContinueRemainingTasks,
 }: Props) {
@@ -117,6 +119,7 @@ export function AssistantMessage({
                 isLastAssistant={!!isLast}
                 streaming={streaming}
                 nextUserContent={nextUserContent}
+                suppressDirectionForms={suppressDirectionForms}
                 locallySubmitted={locallySubmitted}
                 onSubmitForm={(formId, text) => {
                   setLocallySubmitted((prev) => {
@@ -440,6 +443,7 @@ function ProseBlock({
   isLastAssistant,
   streaming,
   nextUserContent,
+  suppressDirectionForms,
   locallySubmitted,
   onSubmitForm,
 }: {
@@ -447,6 +451,7 @@ function ProseBlock({
   isLastAssistant: boolean;
   streaming: boolean;
   nextUserContent?: string;
+  suppressDirectionForms: boolean;
   locallySubmitted: Set<string>;
   onSubmitForm: (formId: string, text: string) => void;
 }) {
@@ -462,8 +467,12 @@ function ProseBlock({
       | { key: string; kind: "text"; text: string }
       | { key: string; kind: "reminder"; text: string }
       | { key: string; kind: "form"; form: QuestionForm }
+      | { key: string; kind: "suppressed-direction" }
     > => {
       if (seg.kind === "form") {
+        if (suppressDirectionForms && isDirectionForm(seg.form)) {
+          return [{ key: `f-${idx}`, kind: "suppressed-direction" }];
+        }
         return [{ key: `f-${idx}`, kind: "form", form: seg.form }];
       }
       if (seg.text.trim().length === 0) return [];
@@ -485,6 +494,15 @@ function ProseBlock({
         if (seg.kind === "text") {
           return <Fragment key={seg.key}>{renderMarkdown(seg.text)}</Fragment>;
         }
+        if (seg.kind === "suppressed-direction") {
+          return (
+            <div key={seg.key} className="status-pill">
+              <span className="status-label">
+                Active design system selected. Visual direction is already locked.
+              </span>
+            </div>
+          );
+        }
         return (
           <FormBlock
             key={seg.key}
@@ -499,6 +517,12 @@ function ProseBlock({
       })}
     </div>
   );
+}
+
+function isDirectionForm(form: QuestionForm): boolean {
+  if (form.id.toLowerCase() === "direction") return true;
+  if (form.title.toLowerCase().includes("visual direction")) return true;
+  return form.questions.some((q) => q.type === "direction-cards");
 }
 
 function FormBlock({

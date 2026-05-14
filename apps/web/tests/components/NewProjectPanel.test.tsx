@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildDesignSystemCreateSelection,
   defaultDesignSystemSelection,
+  isUsableDesignSystem,
   NewProjectPanel,
 } from '../../src/components/NewProjectPanel';
 import type { DesignSystemSummary, ProjectTemplate, SkillSummary } from '../../src/types';
@@ -43,6 +44,16 @@ const designSystems: DesignSystemSummary[] = [
     category: 'Editorial',
     swatches: ['#111111', '#f7f0e8'],
   },
+  {
+    id: 'draft-acme',
+    title: 'Draft Acme',
+    summary: 'Unpublished user system.',
+    category: 'Custom',
+    swatches: ['#ffffff', '#111111'],
+    source: 'user',
+    status: 'draft',
+    isEditable: true,
+  },
 ];
 
 const templates: ProjectTemplate[] = [
@@ -77,8 +88,11 @@ beforeEach(() => {
 describe('NewProjectPanel design system defaults', () => {
   it('uses the configured default design system when it exists in the catalog', () => {
     expect(defaultDesignSystemSelection('clay', designSystems)).toEqual(['clay']);
+    expect(defaultDesignSystemSelection('draft-acme', designSystems)).toEqual([]);
     expect(defaultDesignSystemSelection('missing', designSystems)).toEqual([]);
     expect(defaultDesignSystemSelection(null, designSystems)).toEqual([]);
+    expect(isUsableDesignSystem(designSystems[0]!)).toBe(true);
+    expect(isUsableDesignSystem(designSystems[2]!)).toBe(false);
   });
 
   it('shows the configured default design system as the active project selection', () => {
@@ -96,6 +110,7 @@ describe('NewProjectPanel design system defaults', () => {
     expect(markup).toContain('Clay');
     expect(markup).toContain('Default');
     expect(markup).not.toContain('Freeform');
+    expect(markup).not.toContain('Draft Acme');
   });
 
   it('keeps media project creation from inheriting a hidden design system pick', () => {

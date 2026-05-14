@@ -298,8 +298,8 @@ function printRootHelp() {
   od tools live-artifacts <create|list|update|refresh> [options]
       Manage live artifacts through daemon wrapper commands.
 
-  od tools connectors <list|execute> [options]
-      Discover and execute configured connectors.
+  od tools connectors <list|execute|github-design-context> [options]
+      Discover configured connectors, execute read tools, and collect GitHub design-system evidence.
 
   od mcp live-artifacts
       Start the MCP server exposing live-artifact and connector tools.
