@@ -156,7 +156,9 @@ test('design system multi-select stores primary and inspiration metadata', async
 
   await expect(page.getByTestId('design-system-trigger')).toContainText('Nexu Soft Tech');
   await expect(page.getByTestId('design-system-trigger')).toContainText('+2');
-  await page.keyboard.press('Escape');
+  await page.getByTestId('design-system-trigger').click();
+  await expect(page.locator('.ds-picker-popover')).toHaveCount(0);
+  await expect(page.getByTestId('create-project')).toBeEnabled();
   await page.getByTestId('create-project').click();
   await expectWorkspaceReady(page);
 
@@ -351,12 +353,8 @@ test('change pet opens pet settings and updates the custom companion draft', asy
   });
 
   await page.goto('/');
-  await page.getByRole('button', { name: /open settings/i }).click();
-
-  const dialog = page.getByRole('dialog');
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole('button', { name: /^Pets\b/ }).click();
-  await expect(dialog.getByRole('heading', { level: 3, name: 'Pets' })).toBeVisible();
+  const dialog = await openEntrySettingsDialog(page, /^Pets\b/);
+  await expect(dialog.getByRole('heading', { level: 2, name: 'Pets' })).toBeVisible();
 
   await dialog.getByRole('tab', { name: 'Custom' }).click();
   const customPanel = dialog.locator('.pet-custom');
@@ -434,8 +432,26 @@ async function openNewProjectPanel(page: Page) {
 }
 
 async function expectDesignsView(page: Page) {
+  if (!/\/projects$/.test(new URL(page.url()).pathname)) {
+    await page.getByTestId('entry-nav-projects').click();
+  }
   await expect(page).toHaveURL(/\/projects$/);
   await expect(page.locator('.design-grid, .design-kanban-board')).toBeVisible();
+}
+
+async function openEntrySettingsDialog(page: Page, sectionName?: RegExp | string): Promise<Locator> {
+  const settingsButton = page.getByRole('button', { name: /open settings/i });
+  await settingsButton.click();
+  const settingsMenu = page.locator('.avatar-popover[role="menu"]');
+  await expect(settingsMenu).toBeVisible();
+  await settingsMenu.getByRole('button', { name: /^Settings$/i }).click();
+
+  const settingsDialog = page.getByRole('dialog');
+  await expect(settingsDialog).toBeVisible();
+  if (sectionName) {
+    await settingsDialog.getByRole('button', { name: sectionName }).click();
+  }
+  return settingsDialog;
 }
 
 async function expectWorkspaceReady(page: Page) {
