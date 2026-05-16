@@ -12,6 +12,7 @@ on:
       - .github/workflows/metrics.yml
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -32,6 +33,7 @@ jobs:
           # as a read/render fallback because many orgs disallow PR creation from it.
           token: ${{ secrets.METRICS_TOKEN || secrets.GITHUB_TOKEN }}
           committer_token: ${{ secrets.METRICS_TOKEN }}
+          committer_branch: metrics-run-${{ github.run_id }}
           output_action: pull-request
           output_condition: data-changed
 
@@ -66,3 +68,15 @@ jobs:
 
           config_timezone: Asia/Shanghai
           config_display: large
+
+      - name: Trigger CI for metrics PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          METRICS_BRANCH: metrics-run-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${{ github.repository }}/branches/$METRICS_BRANCH" >/dev/null 2>&1; then
+            gh workflow run ci.yml --repo "${{ github.repository }}" --ref "$METRICS_BRANCH"
+          else
+            echo "No metrics PR branch created; skipping CI dispatch"
+          fi
