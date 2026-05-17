@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-16T23:54:57.181Z",
+  "generatedAt": "2026-05-17T03:26:31.244Z",
   "contributors": {
     "huyhoangnhh98": {
       "lastAnnouncedTier": "spark",
@@ -281,8 +281,9 @@
     },
     "bulai0408": {
       "lastAnnouncedTier": "signal",
-      "lastKnownScore": 21,
-      "lastCheckedAt": "2026-05-13T07:54:13.548Z",
+      "lastKnownScore": 104,
+      "lastCheckedAt": "2026-05-17T03:26:31.243Z",
+      "scoreVersion": "weighted-v1",
       "lastAnnouncedAt": "2026-05-13T07:54:13.548Z"
     },
     "tiannv": {
