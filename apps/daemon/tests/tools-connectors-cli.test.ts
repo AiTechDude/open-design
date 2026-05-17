@@ -179,6 +179,53 @@ describe('connectors tool CLI', () => {
     expect(note).toContain('Successful connector calls: 1');
     expect(stderrOutput.join('')).toBe('');
   });
+
+  it('prefers path-scoped GitHub file tools over broad repository content tools', async () => {
+    process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456';
+    process.env.OD_TOOL_TOKEN = 'agent-run-token';
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), 'od-github-design-context-'));
+    tempDirs.push(tempDir);
+    const outputPath = path.join(tempDir, 'context/github/multica-ai-multica.md');
+    const executeBodies: unknown[] = [];
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(githubConnectorListWithBroadContentTool()), { headers: { 'Content-Type': 'application/json' }, status: 200 }))
+      .mockImplementation(async (_url, init) => {
+        const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+        executeBodies.push(body);
+        if (body.toolName === 'github.github_get_repository_content') {
+          return new Response(JSON.stringify({
+            error: {
+              code: 'CONNECTOR_OUTPUT_TOO_LARGE',
+              message: 'connector output exceeds max serialized size',
+            },
+          }), { headers: { 'Content-Type': 'application/json' }, status: 502 });
+        }
+        return new Response(JSON.stringify({
+          ok: true,
+          connectorId: 'github',
+          toolName: body.toolName,
+          output: { data: { path: body.input?.filePath ?? body.input?.path, text: 'bounded file content' } },
+        }), { headers: { 'Content-Type': 'application/json' }, status: 200 });
+      });
+
+    const result = await runConnectorsToolCli([
+      'github-design-context',
+      '--repo',
+      'https://github.com/multica-ai/multica',
+      '--output',
+      outputPath,
+      '--require-connector',
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(executeBodies.some((body) =>
+      Boolean(body && typeof body === 'object' && (body as { toolName?: string }).toolName === 'github.github_get_repository_content'),
+    )).toBe(false);
+    expect(executeBodies.some((body) =>
+      Boolean(body && typeof body === 'object' && (body as { toolName?: string }).toolName === 'github.github_get_file_content'),
+    )).toBe(true);
+    await expect(readFile(path.join(tempDir, 'context/github/multica-ai-multica/files/README.md.json'), 'utf8')).resolves.toContain('bounded file content');
+  });
 });
 
 function githubConnectorList() {
@@ -218,4 +265,38 @@ function githubConnectorList() {
       ],
     }],
   };
+}
+
+function githubConnectorListWithBroadContentTool() {
+  const list = githubConnectorList();
+  list.connectors[0]!.tools = [
+    {
+      name: 'github.github_get_repository_content',
+      description: 'Get repository content',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string' },
+          repo: { type: 'string' },
+        },
+        required: ['owner', 'repo'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'github.github_get_file_content',
+      description: 'Get raw file content',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          owner: { type: 'string' },
+          repo: { type: 'string' },
+          filePath: { type: 'string' },
+        },
+        required: ['owner', 'repo', 'filePath'],
+        additionalProperties: false,
+      },
+    },
+  ] as ReturnType<typeof githubConnectorList>['connectors'][number]['tools'];
+  return list;
 }

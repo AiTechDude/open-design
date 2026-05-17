@@ -301,6 +301,26 @@ function findGithubTool(tools: GithubEvidenceTool[], pattern: RegExp): GithubEvi
   return tools.find((tool) => typeof tool.name === 'string' && pattern.test(toolText(tool))) ?? null;
 }
 
+function pathPropertyNames(tool: GithubEvidenceTool): string[] {
+  const propertyNames = Object.keys(schemaProperties(tool));
+  return propertyNames.filter((name) => /^(?:path|file_path|filepath|file|filename|filePath)$/u.test(name));
+}
+
+function githubFileToolScore(tool: GithubEvidenceTool): number {
+  if (typeof tool.name !== 'string') return -1;
+  const text = toolText(tool);
+  const pathScore = pathPropertyNames(tool).length > 0 ? 100 : 0;
+  const rawScore = /(?:raw|blob|file|content)/u.test(text) ? 20 : 0;
+  const broadPenalty = /(?:tree|list|directory|search|repositor(?:y|ies))/u.test(text) ? 80 : 0;
+  return pathScore + rawScore - broadPenalty;
+}
+
+function findGithubFileTools(tools: GithubEvidenceTool[]): GithubEvidenceTool[] {
+  return tools
+    .filter((tool) => githubFileToolScore(tool) > 0)
+    .sort((a, b) => githubFileToolScore(b) - githubFileToolScore(a));
+}
+
 function schemaProperties(tool: GithubEvidenceTool): JsonObject {
   const schema = tool.inputSchema;
   if (!schema || typeof schema !== 'object') return {};
@@ -331,7 +351,7 @@ function buildGithubToolInput(tool: GithubEvidenceTool, repo: GithubRepoRef, fil
   assign(['url', 'repo_url', 'repository_url'], repo.url);
   assign(['query', 'q', 'search'], `repo:${repo.owner}/${repo.repo}`);
   assign(['ref', 'branch', 'sha'], 'HEAD');
-  if (filePath) assign(['path', 'file_path', 'filepath', 'file', 'filename'], filePath);
+  if (filePath) assign(['path', 'file_path', 'filepath', 'file', 'filename', 'filePath'], filePath);
   for (const name of required) {
     if (input[name] === undefined) return null;
   }
@@ -412,7 +432,7 @@ async function runGithubDesignContext(baseUrl: URL, token: string, options: Pars
   const tools = connectorTools(github);
   const calls: GithubEvidenceCall[] = [];
   const searchTool = findGithubTool(tools, /search.*repositor|repositor.*search/u);
-  const fileTool = findGithubTool(tools, /(?:file|content|blob|raw)/u);
+  const fileTools = findGithubFileTools(tools);
   const enqueue = async (label: string, tool: GithubEvidenceTool | null, filePath?: string) => {
     if (!tool || typeof tool.name !== 'string') {
       calls.push({ label, toolName: 'unavailable', input: {}, ...(filePath ? { snapshotPath: filePath } : {}), warning: 'No compatible GitHub connector tool was available.' });
@@ -439,9 +459,44 @@ async function runGithubDesignContext(baseUrl: URL, token: string, options: Pars
       });
     }
   };
+  const enqueueFileSnapshot = async (filePath: string) => {
+    if (fileTools.length === 0) {
+      calls.push({
+        label: `File snapshot: ${filePath}`,
+        toolName: 'unavailable',
+        input: {},
+        snapshotPath: filePath,
+        warning: 'No path-scoped GitHub file connector tool was available.',
+      });
+      return;
+    }
+    const failed: GithubEvidenceCall[] = [];
+    for (const tool of fileTools) {
+      const before = calls.length;
+      await enqueue(`File snapshot: ${filePath}`, tool, filePath);
+      const attempt = calls.pop();
+      if (!attempt) continue;
+      if (attempt.output !== undefined) {
+        calls.push(attempt);
+        if (failed.length > 0) {
+          calls.push({
+            label: `File snapshot retries: ${filePath}`,
+            toolName: failed.map((call) => call.toolName).join(', '),
+            input: {},
+            snapshotPath: filePath,
+            warning: `Skipped ${failed.length} incompatible or oversized file-tool candidate(s) before a bounded path-scoped read succeeded.`,
+          });
+        }
+        return;
+      }
+      failed.push(attempt);
+      if (calls.length > before) calls.splice(before);
+    }
+    calls.push(...failed);
+  };
   await enqueue('Repository search', searchTool);
   for (const filePath of GITHUB_DESIGN_CONTEXT_PATHS) {
-    await enqueue(`File snapshot: ${filePath}`, fileTool, filePath);
+    await enqueueFileSnapshot(filePath);
   }
   const successCount = calls.filter((call) => call.output !== undefined).length;
   if (successCount === 0) {
