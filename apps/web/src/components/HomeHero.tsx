@@ -1192,12 +1192,20 @@ function InlinePromptInput({
   }
 
   if (field && type === 'number') {
+    const numberValue = value === undefined || value === null ? '' : String(value);
+    // Size the number input to its actual content (plus room for the
+    // native spinner buttons). Without this it inherits the generic
+    // slot `min-width: 8ch` plus the browser's default <input
+    // type="number"> width and stretches across the entire row even
+    // when the value is a short integer like "10".
+    const referenceLength = numberValue.length || String(field.placeholder ?? fallbackText).length || 1;
+    const numberWidth = `${Math.min(Math.max(referenceLength + 4, 6), 14)}ch`;
     return (
       <input
         {...commonProps}
-        className={`${commonProps.className} home-hero__prompt-slot-input`}
+        className={`${commonProps.className} home-hero__prompt-slot-input home-hero__prompt-slot-input--number`}
         type="number"
-        value={value === undefined || value === null ? '' : String(value)}
+        value={numberValue}
         placeholder={field.placeholder ?? fallbackText}
         onChange={(event) => {
           const raw = event.target.value;
@@ -1208,6 +1216,7 @@ function InlinePromptInput({
           const parsed = Number(raw);
           onChange(Number.isFinite(parsed) ? parsed : raw);
         }}
+        style={{ width: numberWidth }}
       />
     );
   }

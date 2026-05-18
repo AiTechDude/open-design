@@ -308,6 +308,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Number-type slots size to their value plus the native spinner;
+   override the generic 8ch `min-width` so short numbers ("10",
+   "100") don't stretch across the prompt row. */
+.home-hero__prompt-slot-input--number {
+  min-width: 4ch;
+}
 .home-hero__prompt-slot-select {
   width: auto;
   max-width: min(100%, 32ch);
