@@ -438,7 +438,17 @@ jobs:
 
   packaged_smoke_mac:
     name: Packaged mac smoke
-    needs: [validate, packaged_changes]
+    # Depend on the atomic prerequisite jobs directly so reruns can resume from
+    # the failed leaf more naturally instead of funneling every packaged smoke
+    # through the aggregate `validate` gate first.
+    needs:
+      - packaged_changes
+      - static_checks
+      - typecheck
+      - unit_tests
+      - ui_e2e_critical
+      - ui_e2e_extended
+      - build
     if: ${{ needs.packaged_changes.outputs.required == 'true' }}
     runs-on: macos-14
     timeout-minutes: 45
@@ -499,7 +509,14 @@ jobs:
 
   packaged_smoke_win:
     name: Packaged windows smoke
-    needs: [validate, packaged_changes]
+    needs:
+      - packaged_changes
+      - static_checks
+      - typecheck
+      - unit_tests
+      - ui_e2e_critical
+      - ui_e2e_extended
+      - build
     if: ${{ needs.packaged_changes.outputs.required == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 60
@@ -742,7 +759,14 @@ jobs:
 
   packaged_smoke_linux_headless:
     name: Packaged linux headless smoke
-    needs: [validate, packaged_changes]
+    needs:
+      - packaged_changes
+      - static_checks
+      - typecheck
+      - unit_tests
+      - ui_e2e_critical
+      - ui_e2e_extended
+      - build
     if: ${{ needs.packaged_changes.outputs.required == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
