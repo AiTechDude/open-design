@@ -298,6 +298,7 @@ import { LiveArtifactRefreshAbortError } from './live-artifacts/refresh.js';
 import { registerConnectorRoutes } from './connectors/routes.js';
 import { registerActiveContextRoutes } from './active-context-routes.js';
 import { registerMcpRoutes } from './mcp-routes.js';
+import { registerXaiRoutes } from './xai-routes.js';
 import { registerLiveArtifactRoutes } from './live-artifact-routes.js';
 import { registerDeployRoutes, registerDeploymentCheckRoutes } from './deploy-routes.js';
 import { registerMediaRoutes } from './media-routes.js';
@@ -3698,6 +3699,10 @@ export async function startServer({
     http: httpDeps,
     paths: pathDeps,
     mcp: { pendingAuth: mcpPendingAuth, daemonUrlRef },
+  });
+  registerXaiRoutes(app, {
+    http: httpDeps,
+    paths: pathDeps,
   });
   // Project workspace
   registerActiveContextRoutes(app, {
