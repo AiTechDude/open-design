@@ -74,6 +74,15 @@ describe('project design system route gates', () => {
     });
   }
 
+  async function writeProjectText(projectId: string, name: string, content: string) {
+    const resp = await fetch(`${baseUrl}/api/projects/${encodeURIComponent(projectId)}/files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, content }),
+    });
+    expect(resp.status).toBe(200);
+  }
+
   it('rejects draft design systems when creating a project', async () => {
     const draft = await createUserDesignSystem('draft');
     const id = uniqueId('project-draft-ds');
@@ -141,6 +150,58 @@ describe('project design system route gates', () => {
 
     expect(reopenedBody.project.id).toBe(projectId);
     expect(reopenedBody.project.pendingPrompt).toBe(prompt);
+  });
+
+  it('removes legacy design-system artifact names when re-opening a migrated workspace', async () => {
+    const draft = await createUserDesignSystem('draft');
+
+    const workspaceResp = await fetch(
+      `${baseUrl}/api/design-systems/${encodeURIComponent(draft.id)}/workspace`,
+      { method: 'POST' },
+    );
+    expect(workspaceResp.status).toBe(201);
+    const workspaceBody = (await workspaceResp.json()) as {
+      project: { id: string };
+    };
+    const projectId = workspaceBody.project.id;
+    projectsToClean.push(projectId);
+
+    await writeProjectText(
+      projectId,
+      'preview/typography-scale.html',
+      '<!doctype html><html><body>old type</body></html>',
+    );
+    await writeProjectText(
+      projectId,
+      'preview/colors-ui-palette.html',
+      '<!doctype html><html><body>old colors</body></html>',
+    );
+    await writeProjectText(
+      projectId,
+      'ui_kits/generated_interface/index.html',
+      '<!doctype html><html><body>old app</body></html>',
+    );
+
+    const reopenedResp = await fetch(
+      `${baseUrl}/api/design-systems/${encodeURIComponent(draft.id)}/workspace`,
+      { method: 'POST' },
+    );
+    expect(reopenedResp.status).toBe(201);
+    const reopenedBody = (await reopenedResp.json()) as {
+      files: Array<{ path: string }>;
+    };
+    const paths = reopenedBody.files.map((file) => file.path);
+
+    expect(paths).toEqual(expect.arrayContaining([
+      'preview/typography-specimens.html',
+      'preview/colors-primary.html',
+      'ui_kits/app/index.html',
+    ]));
+    expect(paths).not.toEqual(expect.arrayContaining([
+      'preview/typography-scale.html',
+      'preview/colors-ui-palette.html',
+      'ui_kits/generated_interface/index.html',
+    ]));
   });
 
   it('rejects patching an existing project to a draft design system', async () => {

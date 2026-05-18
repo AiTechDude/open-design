@@ -46,6 +46,7 @@ import { syncCommunityPets } from './community-pets-sync.js';
 import {
   createUserDesignSystem,
   deleteUserDesignSystem,
+  LEGACY_DESIGN_SYSTEM_ARTIFACTS,
   linkUserDesignSystemProject,
   listDesignSystems,
   listUserDesignSystemFiles,
@@ -2783,9 +2784,33 @@ export async function startServer({
         project.metadata,
       );
     }
+    await removeLegacyDesignSystemWorkspaceArtifacts(project);
     await linkUserDesignSystemProject(USER_DESIGN_SYSTEMS_DIR, id, project.id);
     const projectFiles = await listFiles(PROJECTS_DIR, projectId, { metadata: project.metadata });
     return { project, files: projectFiles };
+  }
+
+  async function removeLegacyDesignSystemWorkspaceArtifacts(project) {
+    if (project?.metadata?.importedFrom !== 'design-system') return;
+    const dir = resolveProjectDir(PROJECTS_DIR, project.id, project.metadata);
+    for (const artifact of LEGACY_DESIGN_SYSTEM_ARTIFACTS) {
+      const replacementReady = await Promise.all(
+        artifact.replacementPaths.map(async (replacementPath) => {
+          try {
+            const stats = await fs.promises.stat(path.join(dir, ...replacementPath.split('/')));
+            return stats.isFile();
+          } catch (err) {
+            if (!err || (err.code !== 'ENOENT' && err.code !== 'ENOTDIR')) throw err;
+            return false;
+          }
+        }),
+      );
+      if (!replacementReady.every(Boolean)) continue;
+      await fs.promises.rm(path.join(dir, ...artifact.legacyPath.split('/')), {
+        recursive: artifact.removeDirectory === true,
+        force: true,
+      });
+    }
   }
 
   async function readDesignSystemWorkspaceTextFile(db, summary, filePath) {

@@ -202,6 +202,16 @@ describe('design systems registry', () => {
         'ui_kits/app/README.md',
       ]),
     );
+    expect(files?.map((file) => file.path)).not.toEqual(
+      expect.arrayContaining([
+        'preview/colors-ui-palette.html',
+        'preview/colors-node-types.html',
+        'preview/typography-scale.html',
+        'preview/spacing-system.html',
+        'preview/logo-variants.html',
+        'ui_kits/generated_interface/index.html',
+      ]),
+    );
     await expect(readUserDesignSystemFile(root, 'user:legacy', 'ui_kits/app/index.html'))
       .resolves
       .toMatchObject({

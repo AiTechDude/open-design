@@ -88,6 +88,34 @@ type UserDesignSystemMetadata = {
   projectId?: string;
 };
 
+export const LEGACY_DESIGN_SYSTEM_ARTIFACTS = [
+  {
+    legacyPath: 'preview/colors-ui-palette.html',
+    replacementPaths: ['preview/colors-primary.html'],
+  },
+  {
+    legacyPath: 'preview/colors-node-types.html',
+    replacementPaths: ['preview/colors-theme-light.html', 'preview/colors-theme-dark.html'],
+  },
+  {
+    legacyPath: 'preview/typography-scale.html',
+    replacementPaths: ['preview/typography-specimens.html'],
+  },
+  {
+    legacyPath: 'preview/spacing-system.html',
+    replacementPaths: ['preview/spacing-tokens.html', 'preview/spacing-radius.html', 'preview/spacing-shadows.html'],
+  },
+  {
+    legacyPath: 'preview/logo-variants.html',
+    replacementPaths: ['preview/brand-assets.html'],
+  },
+  {
+    legacyPath: 'ui_kits/generated_interface',
+    replacementPaths: ['ui_kits/app/index.html'],
+    removeDirectory: true,
+  },
+] as const;
+
 export type UserDesignSystemInput = {
   title?: string;
   summary?: string;
@@ -625,9 +653,9 @@ async function migrateLegacyDesignSystemPackage(
     copyIfMissing('preview/logo-variants.html', 'preview/brand-assets.html'),
     copyIfMissing('ui_kits/generated_interface/index.html', 'ui_kits/app/index.html'),
   ]);
-  const migratedAnyArtifact = migratedArtifacts.some(Boolean);
-  if (!migratedAnyArtifact) return;
 
+  const hasLegacyArtifacts = await hasAnyLegacyDesignSystemArtifact(dir);
+  if (!hasLegacyArtifacts && !migratedArtifacts.some(Boolean)) return;
   const appKitExists = await fileExists(path.join(dir, 'ui_kits', 'app', 'index.html'));
 
   await Promise.all([
@@ -646,6 +674,36 @@ async function migrateLegacyDesignSystemPackage(
         )
       : Promise.resolve(false),
   ]);
+  await removeLegacyDesignSystemArtifacts(dir);
+}
+
+async function hasAnyLegacyDesignSystemArtifact(dir: string): Promise<boolean> {
+  for (const artifact of LEGACY_DESIGN_SYSTEM_ARTIFACTS) {
+    try {
+      await stat(path.join(dir, ...artifact.legacyPath.split('/')));
+      return true;
+    } catch (err) {
+      if (!isAbsenceError(err)) throw err;
+    }
+  }
+  return false;
+}
+
+async function removeLegacyDesignSystemArtifacts(dir: string): Promise<void> {
+  await Promise.all(
+    LEGACY_DESIGN_SYSTEM_ARTIFACTS.map(async (artifact) => {
+      const replacementReady = await Promise.all(
+        artifact.replacementPaths.map((replacementPath) =>
+          fileExists(path.join(dir, ...replacementPath.split('/'))),
+        ),
+      );
+      if (!replacementReady.every(Boolean)) return;
+      await rm(path.join(dir, ...artifact.legacyPath.split('/')), {
+        recursive: 'removeDirectory' in artifact && artifact.removeDirectory === true,
+        force: true,
+      });
+    }),
+  );
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
