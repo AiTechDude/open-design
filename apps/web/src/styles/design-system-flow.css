@@ -29,7 +29,8 @@
 .ds-warning-card,
 .ds-section-actions button,
 .ds-publish-card label,
-.ds-github-connector-actions button {
+.ds-github-access-toggle,
+.ds-github-access-actions button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -160,58 +161,136 @@
   font-size: 12px;
   line-height: 1;
 }
-.ds-github-connector-gate {
+.ds-github-access-panel {
   grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  gap: 12px;
   margin-top: 2px;
   padding-top: 14px;
   border-top: 1px solid var(--border-soft);
   color: var(--text-muted);
 }
-.ds-github-connector-copy {
+.ds-github-access-header {
   min-width: 0;
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
 }
-.ds-github-connector-copy .od-icon {
-  flex: 0 0 auto;
-  margin-top: 2px;
-  color: var(--text-muted);
+.ds-github-access-header > span {
+  min-width: 0;
 }
-.ds-github-connector-copy strong {
+.ds-github-access-header strong {
   display: block;
   color: var(--text);
   font-size: 14px;
   line-height: 1.35;
 }
-.ds-github-connector-copy p {
+.ds-github-access-header p {
   margin: 2px 0 0;
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.45;
 }
-.ds-github-connector-copy em {
-  display: block;
-  margin-top: 5px;
-  color: var(--danger);
-  font-size: 12px;
-  font-style: normal;
-}
-.ds-github-connector-actions {
+.ds-github-access-toggle {
   flex: 0 0 auto;
+}
+.ds-github-access-panel .accordion-collapsible[hidden] {
+  display: none;
+}
+.ds-github-access-methods {
+  padding-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+.ds-github-access-method {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0 14px;
+}
+.ds-github-access-method:first-child {
+  padding-left: 0;
+}
+.ds-github-access-method + .ds-github-access-method {
+  border-left: 1px solid var(--border-soft);
+}
+.ds-github-access-method .od-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+.ds-github-access-method-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.ds-github-access-method-title {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
-.ds-github-connector-gate.is-connected .ds-github-connector-copy .od-icon {
-  color: var(--success);
+.ds-github-access-method-title strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
 }
-.ds-github-connector-gate.is-missing-key .ds-github-connector-copy .od-icon {
-  color: var(--accent);
+.ds-github-access-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.ds-github-access-badge.is-success {
+  border-color: var(--green-border);
+  background: var(--green-bg);
+  color: var(--green);
+}
+.ds-github-access-badge.is-warning,
+.ds-github-access-badge.is-loading {
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--border));
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+.ds-github-access-badge.is-danger {
+  border-color: var(--red-border);
+  background: var(--red-bg);
+  color: var(--red);
+}
+.ds-github-access-method p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.ds-github-access-method em {
+  display: block;
+  margin-top: 2px;
+  color: var(--red);
+  font-size: 12px;
+  font-style: normal;
+}
+.ds-github-access-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+.ds-github-access-panel.has-connected-connector .ds-github-access-method:last-child .od-icon {
+  color: var(--green);
 }
 .ds-drop-zone-wrap {
   min-width: 0;
@@ -1188,13 +1267,22 @@
   .ds-publish-card {
     grid-template-columns: 1fr;
   }
-  .ds-github-connector-gate {
-    align-items: stretch;
+  .ds-github-access-methods {
+    grid-template-columns: 1fr;
+  }
+  .ds-github-access-header {
+    align-items: flex-start;
     flex-direction: column;
   }
-  .ds-github-connector-actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
+  .ds-github-access-method {
+    padding: 12px 0 0;
+  }
+  .ds-github-access-method:first-child {
+    padding-top: 0;
+  }
+  .ds-github-access-method + .ds-github-access-method {
+    border-top: 1px solid var(--border-soft);
+    border-left: 0;
   }
   .ds-drop-zone-wrap {
     grid-template-columns: 1fr;

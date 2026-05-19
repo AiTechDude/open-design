@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ConnectorConnectResponse, ConnectorDetail, ConnectorStatusResponse } from '@open-design/contracts';
 import { streamViaDaemon } from '../providers/daemon';
 import {
@@ -50,17 +50,19 @@ import type {
   DesignSystemProvenance,
   DesignSystemRevision,
   OpenTabsState,
+  Project,
   ProjectFile,
   ProjectMetadata,
 } from '../types';
 import { decideAutoOpenAfterWrite } from './auto-open-file';
 import { ChatPane } from './ChatPane';
 import { FileWorkspace } from './FileWorkspace';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
 
 interface CreationProps {
   onBack: () => void;
-  onCreated: (projectId: string) => void;
+  onCreated: (projectId: string, project?: Project) => void;
+  onProjectPrepared?: (project: Project) => void;
   onSystemsRefresh?: () => Promise<void> | void;
   config?: AppConfig;
   onOpenConnectorsTab?: () => void;
@@ -181,6 +183,7 @@ function clearRememberedGenerationJob(designSystemId: string): void {
 export function DesignSystemCreationFlow({
   onBack,
   onCreated,
+  onProjectPrepared,
   onSystemsRefresh,
   config,
   onOpenConnectorsTab,
@@ -197,15 +200,22 @@ export function DesignSystemCreationFlow({
   const [githubAuthorizationPending, setGithubAuthorizationPending] = useState(false);
   const [githubAuthorizationUrl, setGithubAuthorizationUrl] = useState<string | null>(null);
   const githubConnectorRefreshId = useRef(0);
+  const githubConnectorRequestInFlight = useRef(false);
 
   const refreshGithubConnector = useCallback(async () => {
-    const refreshId = ++githubConnectorRefreshId.current;
     if (!composioConfigured) {
+      githubConnectorRefreshId.current += 1;
+      githubConnectorRequestInFlight.current = false;
       setGithubConnector(null);
+      setGithubConnectorLoading(false);
+      setGithubConnectorError(null);
       setGithubAuthorizationPending(false);
       setGithubAuthorizationUrl(null);
       return;
     }
+    if (githubConnectorRequestInFlight.current) return;
+    const refreshId = ++githubConnectorRefreshId.current;
+    githubConnectorRequestInFlight.current = true;
     setGithubConnectorLoading(true);
     setGithubConnectorError(null);
     try {
@@ -229,6 +239,9 @@ export function DesignSystemCreationFlow({
       setGithubConnector(null);
       setGithubConnectorError(err instanceof Error ? err.message : 'Could not check the GitHub connector.');
     } finally {
+      if (githubConnectorRefreshId.current === refreshId) {
+        githubConnectorRequestInFlight.current = false;
+      }
       if (githubConnectorRefreshId.current === refreshId) {
         setGithubConnectorLoading(false);
       }
@@ -358,37 +371,20 @@ export function DesignSystemCreationFlow({
         setStep('setup');
         return;
       }
-      const stagedLocalCode = await stageLocalCodeFiles(workspace.project.id, state.codeFileObjects);
-      const stagedFigma = await stageFigmaFiles(workspace.project.id, state.figFileObjects);
-      const stagedAssets = await stageAssetFiles(workspace.project.id, state.assetFileObjects);
-      await writeProjectTextFile(
-        workspace.project.id,
-        SOURCE_CONTEXT_MANIFEST_PATH,
-        buildSourceContextManifest(state, {
+      const project = workspace.project;
+      const setupState = state;
+      const connector = githubConnector;
+      onCreated(project.id, project);
+      scheduleAfterProjectHandoff(() => {
+        void prepareCreatedDesignSystemProject({
+          project,
+          state: setupState,
           composioConfigured,
-          githubConnector,
-          stagedLocalCode,
-          stagedFigma,
-          stagedAssets,
-        }),
-      );
-      const metadata = mergeLinkedCodeFolders(workspace.project.metadata, state.codeFolders);
-      const prompt = buildCreationAgentPrompt(
-        state,
-        stagedLocalCode,
-        SOURCE_CONTEXT_MANIFEST_PATH,
-        stagedAssets,
-        stagedFigma,
-      );
-      await patchProject(workspace.project.id, { pendingPrompt: prompt, metadata });
-      try {
-        window.sessionStorage.setItem(`od:auto-send-first:${workspace.project.id}`, '1');
-      } catch {
-        // If sessionStorage is unavailable, the project still opens with the
-        // pending prompt ready for the user to send manually.
-      }
-      onCreated(workspace.project.id);
-      void onSystemsRefresh?.();
+          githubConnector: connector,
+          onProjectPrepared,
+          onSystemsRefresh,
+        });
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not prepare the design system project.');
       setStep('setup');
@@ -502,7 +498,7 @@ export function DesignSystemCreationFlow({
                   ))}
                 </div>
               ) : null}
-              <GitHubConnectorGate
+              <GitHubRepositoryAccessPanel
                 composioConfigured={composioConfigured}
                 connector={githubConnector}
                 loading={githubConnectorLoading}
@@ -2057,7 +2053,20 @@ function withRelativePath(file: File, relativePath: string): File {
   return file;
 }
 
-function GitHubConnectorGate({
+type AccessBadgeTone = 'muted' | 'success' | 'warning' | 'danger' | 'loading';
+
+interface GitHubAccessMethod {
+  id: string;
+  icon: IconName;
+  title: string;
+  badge: string;
+  tone: AccessBadgeTone;
+  description: string;
+  action?: ReactNode;
+  note?: string | null;
+}
+
+function GitHubRepositoryAccessPanel({
   composioConfigured,
   connector,
   loading,
@@ -2082,69 +2091,141 @@ function GitHubConnectorGate({
   onOpenAuthorization: () => void;
   onDisconnect: () => void;
 }) {
+  const [methodsExpanded, setMethodsExpanded] = useState(false);
   const connected = isGithubConnectorConnected(connector);
   const account = getDisplayableGithubAccountLabel(connector);
   const busy = action !== null;
-  let title = 'GitHub connector optional';
-  let description = 'Repositories can be read with local git or GitHub CLI. For private repos, authorize with gh auth login.';
-  let icon: 'github' | 'settings' | 'spinner' = 'github';
+  let composioBadge = 'Optional';
+  let composioTone: AccessBadgeTone = 'muted';
+  let composioDescription = 'Composio GitHub connector access for agent tools; repo URLs still work with local git or GitHub CLI.';
+  let composioIcon: IconName = 'settings';
 
   if (!composioConfigured) {
-    title = 'Local GitHub intake available';
-    description = 'Add repository URLs now. Configure Composio only for connector-backed access; local git or GitHub CLI auth can still snapshot repos.';
-    icon = 'settings';
-  } else if (loading) {
-    title = 'Checking GitHub connector';
-    description = 'Open Design is checking whether GitHub is already connected.';
-    icon = 'spinner';
-  } else if (authorizationPending) {
-    title = 'GitHub authorization pending';
-    description = 'Finish authorization in the browser window. Repo URLs can still use local git or GitHub CLI fallback.';
+    composioBadge = 'Not configured';
+    composioDescription = 'Add a Composio API key only if this project needs connector-backed GitHub tools.';
   } else if (connected) {
-    title = account ? `Connected as ${account}` : 'GitHub connected';
-    description = 'Repository intake will try the connector first, then use local git or authenticated GitHub CLI fallback if needed.';
-  } else if (composioConfigured) {
-    title = 'Composio key configured';
-    description = 'Connect GitHub for connector-backed access, or add repository URLs and let local git/GitHub CLI snapshot them.';
+    composioBadge = 'Connected';
+    composioTone = 'success';
+    composioIcon = 'github';
+    composioDescription = account
+      ? `Composio GitHub connector connected as ${account}; it is available as fallback when this device cannot read the repository.`
+      : 'Composio GitHub connector is available as fallback when this device cannot read the repository.';
+  } else if (authorizationPending) {
+    composioBadge = 'Pending';
+    composioTone = 'warning';
+    composioIcon = 'external-link';
+    composioDescription = 'Finish the Composio authorization window; local GitHub intake remains available.';
+  } else if (loading) {
+    composioBadge = 'Checking';
+    composioTone = 'loading';
+    composioIcon = 'spinner';
+    composioDescription = 'Checking connector status in the background; URL intake is not blocked.';
+  } else if (error) {
+    composioBadge = 'Needs attention';
+    composioTone = 'warning';
+  } else if (connector?.status === 'error') {
+    composioBadge = 'Needs attention';
+    composioTone = 'danger';
+    composioDescription = 'Reconnect the Composio GitHub connector, or continue with local git/GitHub CLI.';
   }
+
+  const composioAction = !composioConfigured ? (
+    <button type="button" className="ghost" onClick={onOpenConnectorsTab}>
+      Configure Composio
+    </button>
+  ) : connected || authorizationPending ? (
+    <>
+      {authorizationPending && authorizationUrl ? (
+        <button type="button" className="ghost" disabled={busy} onClick={onOpenAuthorization}>
+          Open authorization
+        </button>
+      ) : null}
+      <button type="button" className="ghost" disabled={busy} onClick={onDisconnect}>
+        {action === 'disconnect' ? 'Disconnecting...' : 'Disconnect'}
+      </button>
+    </>
+  ) : (
+    <button type="button" className="ghost" disabled={busy} onClick={onConnect}>
+      {action === 'connect' ? 'Connecting...' : 'Connect via Composio'}
+    </button>
+  );
+
+  const methods: GitHubAccessMethod[] = [
+    {
+      id: 'local',
+      icon: 'github',
+      title: 'This device',
+      badge: 'Automatic',
+      tone: 'success',
+      description: 'Uses public git clone, local git credentials, or GitHub CLI auth available on this machine.',
+    },
+    {
+      id: 'native-oauth',
+      icon: 'link',
+      title: 'Open Design account',
+      badge: 'Coming soon',
+      tone: 'muted',
+      description: 'Native GitHub sign-in managed by Open Design; this build does not use an OD-managed GitHub token yet.',
+    },
+    {
+      id: 'composio',
+      icon: composioIcon,
+      title: 'Connector platform',
+      badge: composioBadge,
+      tone: composioTone,
+      description: composioDescription,
+      action: composioAction,
+      note: error,
+    },
+  ];
 
   return (
     <div
       className={[
-        'ds-github-connector-gate',
-        !composioConfigured ? 'is-missing-key' : '',
-        connected ? 'is-connected' : '',
+        'ds-github-access-panel',
+        connected ? 'has-connected-connector' : '',
       ].filter(Boolean).join(' ')}
     >
-      <div className="ds-github-connector-copy">
-        <Icon name={icon} />
+      <div className="ds-github-access-header">
         <span>
-          <strong>{title}</strong>
-          <p>{description}</p>
-          {error ? <em>{error}</em> : null}
+          <strong>Repository access: Auto</strong>
+          <p>Paste a GitHub URL. Open Design will use the first working access method.</p>
         </span>
+        <button
+          type="button"
+          className="ghost ds-github-access-toggle"
+          aria-expanded={methodsExpanded}
+          aria-controls="ds-github-access-methods"
+          onClick={() => setMethodsExpanded((current) => !current)}
+        >
+          <Icon name={methodsExpanded ? 'chevron-down' : 'chevron-right'} />
+          {methodsExpanded ? 'Hide access methods' : 'Show access methods'}
+        </button>
       </div>
-      <div className="ds-github-connector-actions">
-        {!composioConfigured ? (
-          <button type="button" className="ghost" onClick={onOpenConnectorsTab}>
-            Configure Composio key
-          </button>
-        ) : connected || authorizationPending ? (
-          <>
-            {authorizationPending && authorizationUrl ? (
-              <button type="button" className="ghost" disabled={busy} onClick={onOpenAuthorization}>
-                Open authorization page
-              </button>
-            ) : null}
-            <button type="button" className="ghost" disabled={busy} onClick={onDisconnect}>
-              {action === 'disconnect' ? 'Disconnecting...' : 'Disconnect'}
-            </button>
-          </>
-        ) : (
-          <button type="button" className="ghost" disabled={busy} onClick={onConnect}>
-            {action === 'connect' ? 'Connecting...' : 'Connect GitHub'}
-          </button>
-        )}
+      <div
+        id="ds-github-access-methods"
+        className={`accordion-collapsible ${methodsExpanded ? 'open' : ''}`}
+        hidden={!methodsExpanded}
+        aria-hidden={!methodsExpanded}
+      >
+        <div className="accordion-collapsible-inner">
+          <div className="ds-github-access-methods" aria-label="GitHub repository access methods">
+            {methods.map((method) => (
+              <div key={method.id} className="ds-github-access-method">
+                <Icon name={method.icon} />
+                <span className="ds-github-access-method-copy">
+                  <span className="ds-github-access-method-title">
+                    <strong>{method.title}</strong>
+                    <small className={`ds-github-access-badge is-${method.tone}`}>{method.badge}</small>
+                  </span>
+                  <p>{method.description}</p>
+                  {method.note ? <em>{method.note}</em> : null}
+                  {method.action ? <span className="ds-github-access-actions">{method.action}</span> : null}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2248,6 +2329,75 @@ function genericUrlTitleFromText(text: string): string | undefined {
   }
 }
 
+function scheduleAfterProjectHandoff(task: () => void): void {
+  if (typeof window === 'undefined') {
+    task();
+    return;
+  }
+  const run = () => window.setTimeout(task, 0);
+  if (typeof window.requestAnimationFrame === 'function') {
+    window.requestAnimationFrame(run);
+    return;
+  }
+  run();
+}
+
+async function prepareCreatedDesignSystemProject({
+  project,
+  state,
+  composioConfigured,
+  githubConnector,
+  onProjectPrepared,
+  onSystemsRefresh,
+}: {
+  project: Project;
+  state: SetupState;
+  composioConfigured: boolean;
+  githubConnector: ConnectorDetail | null;
+  onProjectPrepared?: (project: Project) => void;
+  onSystemsRefresh?: () => Promise<void> | void;
+}): Promise<void> {
+  try {
+    const stagedLocalCode = await stageLocalCodeFiles(project.id, state.codeFileObjects);
+    const stagedFigma = await stageFigmaFiles(project.id, state.figFileObjects);
+    const stagedAssets = await stageAssetFiles(project.id, state.assetFileObjects);
+    await writeProjectTextFile(
+      project.id,
+      SOURCE_CONTEXT_MANIFEST_PATH,
+      buildSourceContextManifest(state, {
+        composioConfigured,
+        githubConnector,
+        stagedLocalCode,
+        stagedFigma,
+        stagedAssets,
+      }),
+    );
+    const metadata = mergeLinkedCodeFolders(project.metadata, state.codeFolders);
+    const prompt = buildCreationAgentPrompt(
+      state,
+      stagedLocalCode,
+      SOURCE_CONTEXT_MANIFEST_PATH,
+      stagedAssets,
+      stagedFigma,
+    );
+    const preparedProject = await patchProject(project.id, { pendingPrompt: prompt, metadata });
+    try {
+      window.sessionStorage.setItem(`od:auto-send-first:${project.id}`, '1');
+    } catch {
+      // If sessionStorage is unavailable, the project still opens with the
+      // pending prompt ready for the user to send manually.
+    }
+    onProjectPrepared?.(preparedProject ?? {
+      ...project,
+      pendingPrompt: prompt,
+      metadata,
+    });
+    void onSystemsRefresh?.();
+  } catch (err) {
+    console.error('Could not prepare the design system project after opening it.', err);
+  }
+}
+
 function humanizeRepositoryName(repo: string): string | undefined {
   const words = repo.replace(/\.git$/iu, '').replace(/[-_]+/gu, ' ').trim().split(/\s+/u).filter(Boolean);
   if (words.length === 0) return undefined;
@@ -2299,15 +2449,17 @@ function isGithubConnectorConnected(connector: ConnectorDetail | null): boolean 
 async function fetchGithubConnectorStatusWithTimeout(): Promise<{ connector: ConnectorDetail | null; timedOut: boolean }> {
   let timeoutId: number | undefined;
   let timedOut = false;
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
   try {
     const timeout = new Promise<null>((resolve) => {
       timeoutId = window.setTimeout(() => {
         timedOut = true;
+        controller?.abort();
         resolve(null);
       }, GITHUB_CONNECTOR_STATUS_TIMEOUT_MS);
     });
     const statuses = await Promise.race([
-      fetchConnectorStatuses(),
+      fetchConnectorStatuses(controller ? { signal: controller.signal } : undefined),
       timeout,
     ]);
     return { connector: githubConnectorFromStatus(statuses?.[GITHUB_CONNECTOR_ID]), timedOut };
@@ -2695,9 +2847,9 @@ function buildCreationAgentPrompt(
     'Completion gate:',
     '- For each linked GitHub repository, there must be a `context/github/*.md` evidence note plus command-written snapshots under `context/github/*/files/` before writing final design-system rules or previews. The snapshots should include theme/token/source files and any available binary assets or fonts selected by the intake command.',
     '- For each linked local code folder, run the listed `local-design-context` command and use its `context/local-code/*.md` evidence note plus command-written snapshots under `context/local-code/*/files/` before writing final design-system rules or previews. Browser-copied snapshots already under `context/local-code/` are also valid local evidence.',
-    '- Do not call GitHub connector tree/content/raw tools directly from the agent. Use only the bounded `github-design-context` command listed in `context/source-context.md`; it handles large repositories by narrowing and snapshotting evidence locally.',
-    '- If the bounded command records that it used its shallow local clone fallback because the connector was unavailable, permission-blocked, rate-limited, or oversized, treat those command-written snapshots as valid evidence and continue.',
-    '- For private repositories, local git credentials or GitHub CLI authentication (`gh auth login --web`) are valid intake paths because the command still writes local evidence snapshots.',
+    '- Do not call GitHub connector tree/content/raw tools directly from the agent. Use only the bounded `github-design-context` command listed in `context/source-context.md`; it tries this-device git first, authenticated GitHub CLI second, then connector-platform fallback when local access cannot read the repository.',
+    '- If the bounded command records `Read method: git-clone`, treat those this-device snapshots as the primary evidence. If it records `Read method: connector`, treat the connector-platform snapshots as valid fallback evidence and continue.',
+    '- For private repositories, local git credentials or GitHub CLI authentication (`gh auth login --web`) are preferred intake paths because the command still writes local evidence snapshots.',
     '- If the bounded command cannot write snapshots at all, stop with the permission, GitHub CLI login, connection, rate-limit, or clone issue. Do not substitute ad-hoc public GitHub browsing, memory, or URL-only inference.',
     '- Finish only after the project contains reviewable design-system artifacts: `DESIGN.md`, `README.md`, `SKILL.md`, reusable token/style files, focused preview HTML cards, UI-kit examples, preserved assets/fonts when supported, and provenance/context notes.',
     '- Before your final response, run `"$OD_NODE_BIN" "$OD_BIN" tools connectors design-system-package-audit --path . --fail-on-warnings`. Fix every audit error and design-quality warning, including generic visual artifacts, thin source-backed modules, stale manifest paths, and missing representative assets/fonts. If an issue cannot be fixed because source evidence is missing, explain that blocker instead of claiming the design system is ready.',
@@ -2708,7 +2860,7 @@ function buildCreationAgentPrompt(
     '',
     `Company / design system context:\n${state.company.trim()}`,
     sourceContextManifestPath
-      ? `\nSource context manifest:\n- Read \`${sourceContextManifestPath}\` before drafting. It records GitHub connector readiness, local folder links, copied code snapshots, uploaded resources, and the review contract for this design system project.`
+      ? `\nSource context manifest:\n- Read \`${sourceContextManifestPath}\` before drafting. It records GitHub access readiness, local folder links, copied code snapshots, uploaded resources, and the review contract for this design system project.`
       : '',
     sourceNotes ? `\nProvided resources:\n${sourceNotes}` : '',
     githubUrls.length
@@ -2853,7 +3005,7 @@ function buildSourceContextManifest(
     '- assets/, build/, fonts/, and context/ should preserve logos, app icons, tray icons, installer/runtime icons, wordmarks, font files, provenance, and source notes for future projects.',
     BUILD_ASSET_PRESERVATION_CONTRACT,
     '- preview/brand-assets.html should visibly reference preserved files from assets/ or build/ instead of recreating logos/icons as inline placeholder drawings.',
-    '- GitHub evidence must come from the bounded `github-design-context` command, not direct connector tree/content/raw tool calls. The command may record connector use, local git clone, or authenticated GitHub CLI clone when connector output is unavailable, rate-limited, or oversized.',
+    '- GitHub evidence must come from the bounded `github-design-context` command, not direct connector tree/content/raw tool calls. The command tries this-device git first, authenticated GitHub CLI second, and connector-platform fallback only when local access cannot read the repository.',
     '- Linked local folder evidence should come from the bounded `local-design-context` command, which writes a local evidence note and snapshots under `context/local-code/` before final design-system rules are drafted.',
     '- Before marking the design system ready, run `"$OD_NODE_BIN" "$OD_BIN" tools connectors design-system-package-audit --path . --fail-on-warnings` and fix every reported error or warning.',
     '- Draft design systems cannot be used by other projects until published.',
@@ -2884,16 +3036,15 @@ function buildGithubConnectorRunbook(githubUrls: string[]): string {
     .join('\n');
   return [
     'GitHub repository intake is required before drafting the design system:',
-    '1. Run `"$OD_NODE_BIN" "$OD_BIN" tools connectors list --format compact` to check whether the connected `github` connector is available. If it is missing, permission-blocked, rate-limited, or output-limited, the bounded intake command can still use local git credentials or authenticated GitHub CLI (`gh auth login --web`) for public and private repositories.',
-    '2. For each linked repository, run the local intake command before writing design-system files:',
+    '1. For each linked repository, run the bounded intake command before writing design-system files. The command tries this-device access first (`git clone`, then authenticated GitHub CLI via `gh auth login --web`) and uses the Composio GitHub connector only as a connector-platform fallback.',
     intakeCommands,
-    '3. Do not call GitHub connector tree/content/raw tools directly from the agent. Large repositories can trigger `CONNECTOR_OUTPUT_TOO_LARGE`; the bounded intake command is the only allowed GitHub repository intake path for this workflow.',
-    '4. The intake command narrows large repositories through bounded directory browsing, selects design-system-relevant source files plus available logos/icons/fonts, and writes a reviewable evidence note plus file snapshots under `context/github/`; keep those files as the source evidence for this design-system project.',
-    '5. If you already hit `CONNECTOR_OUTPUT_TOO_LARGE` or `CONNECTOR_RATE_LIMITED` from a direct connector call, do not stop and do not retry the same direct tool. Run the bounded intake command above, then inspect the written snapshots.',
-    '6. The command may use a shallow local clone fallback after connector output is unavailable, permission-blocked, rate-limited, or oversized. Plain git credentials and authenticated GitHub CLI clone are both valid because the command writes bounded snapshots under `context/github/*/files/`.',
-    '7. The command is strict: if the bounded intake command cannot write snapshot files, stop and explain the permission, GitHub CLI login, connection, rate-limit, or clone problem. Do not use ad-hoc public GitHub browsing, memory, or URL-only inference for design-system files.',
-    '8. Inspect the generated evidence note plus snapshots for README, package manifests, Tailwind/theme/token files, global CSS, font declarations, component source for buttons/forms/navigation/cards/tables, layout shells, icons/logos/assets, and representative app entry files.',
-    '9. Use that evidence to create or update `DESIGN.md`, `colors_and_type.css`, `README.md`, `SKILL.md`, `preview/`, `ui_kits/app/`, `assets/`, and `fonts/` so the Design System tab can review the output as a reusable package.',
+    '2. Do not call GitHub connector tree/content/raw tools directly from the agent. Large repositories can trigger `CONNECTOR_OUTPUT_TOO_LARGE`; the bounded intake command is the only allowed GitHub repository intake path for this workflow.',
+    '3. The intake command selects design-system-relevant source files plus available logos/icons/fonts and writes a reviewable evidence note plus file snapshots under `context/github/`; keep those files as the source evidence for this design-system project.',
+    '4. If you already hit `CONNECTOR_OUTPUT_TOO_LARGE` or `CONNECTOR_RATE_LIMITED` from a direct connector call, do not stop and do not retry the same direct tool. Run the bounded intake command above, then inspect the written snapshots.',
+    '5. Treat `Read method: git-clone` as the preferred this-device path. Treat `Read method: connector` as valid connector-platform fallback evidence when local git/GitHub CLI could not read the repository.',
+    '6. The command is strict: if the bounded intake command cannot write snapshot files, stop and explain the permission, GitHub CLI login, connection, rate-limit, or clone problem. Do not use ad-hoc public GitHub browsing, memory, or URL-only inference for design-system files.',
+    '7. Inspect the generated evidence note plus snapshots for README, package manifests, Tailwind/theme/token files, global CSS, font declarations, component source for buttons/forms/navigation/cards/tables, layout shells, icons/logos/assets, and representative app entry files.',
+    '8. Use that evidence to create or update `DESIGN.md`, `colors_and_type.css`, `README.md`, `SKILL.md`, `preview/`, `ui_kits/app/`, `assets/`, and `fonts/` so the Design System tab can review the output as a reusable package.',
   ].join('\n');
 }
 

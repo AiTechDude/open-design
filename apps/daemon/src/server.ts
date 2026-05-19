@@ -4445,10 +4445,7 @@ export async function startServer({
   app.post('/api/design-systems', async (req, res) => {
     try {
       const created = await createUserDesignSystem(USER_DESIGN_SYSTEMS_DIR, req.body || {});
-      await ensureUserDesignSystemWorkspaceProject(db, created.id);
-      const systems = await listAllDesignSystems();
-      const detail = systems.find((s) => s.id === created.id) ?? created;
-      res.status(201).json({ ...detail, designSystem: detail });
+      res.status(201).json({ ...created, designSystem: created });
     } catch (err) {
       res.status(400).json({ error: String(err) });
     }

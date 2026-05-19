@@ -460,6 +460,18 @@ describe('connectors tool CLI', () => {
     process.chdir(cwd);
   });
 
+  async function installFailingLocalGithubTools(tmpDir: string): Promise<void> {
+    const fakeBinDir = path.join(tmpDir, 'bin');
+    await mkdir(fakeBinDir, { recursive: true });
+    const fakeGitPath = path.join(fakeBinDir, 'git');
+    await writeFile(fakeGitPath, `#!/bin/sh
+echo "fatal: repository not found" >&2
+exit 128
+`, 'utf8');
+    await chmod(fakeGitPath, 0o755);
+    process.env.PATH = fakeBinDir;
+  }
+
   it('appends curated useCase query params for connector listing', async () => {
     process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456/base/';
     process.env.OD_TOOL_TOKEN = 'agent-run-token';
@@ -525,6 +537,7 @@ describe('connectors tool CLI', () => {
     process.chdir(tmpDir);
     process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456';
     process.env.OD_TOOL_TOKEN = 'agent-run-token';
+    await installFailingLocalGithubTools(tmpDir);
 
     const encode = (value: string) => Buffer.from(value, 'utf8').toString('base64');
     fetchMock
@@ -597,7 +610,7 @@ describe('connectors tool CLI', () => {
       ]),
     }));
     const evidenceNote = await readFile(path.join(tmpDir, 'context/github/acme-ui.md'), 'utf8');
-    expect(evidenceNote).toContain('GitHub connector was used');
+    expect(evidenceNote).toContain('Connector platform fallback was used');
     expect(evidenceNote).toContain('Source Evidence Inventory');
     expect(evidenceNote).toContain('Package Files Materialized');
     expect(evidenceNote).toContain('`build/logo.png`');
@@ -2278,6 +2291,7 @@ describe('connectors tool CLI', () => {
     process.chdir(tmpDir);
     process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456';
     process.env.OD_TOOL_TOKEN = 'agent-run-token';
+    await installFailingLocalGithubTools(tmpDir);
 
     const encode = (value: string) => Buffer.from(value, 'utf8').toString('base64');
     fetchMock
@@ -2363,6 +2377,7 @@ describe('connectors tool CLI', () => {
     process.chdir(tmpDir);
     process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456';
     process.env.OD_TOOL_TOKEN = 'agent-run-token';
+    await installFailingLocalGithubTools(tmpDir);
 
     const encode = (value: string) => Buffer.from(value, 'utf8').toString('base64');
     fetchMock
@@ -2426,7 +2441,7 @@ describe('connectors tool CLI', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('uses shallow local clone fallback when connector rate limits all snapshot file reads', async () => {
+  it('uses shallow local git clone before connector-backed intake', async () => {
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'od-connectors-cli-'));
     process.chdir(tmpDir);
     process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456';
@@ -2505,7 +2520,7 @@ printf 'font-data' > "$last/fonts/ubuntu/Ubuntu-Regular.ttf"
     const stdout = JSON.parse(stdoutOutput.join(''));
     expect(stdout).toEqual(expect.objectContaining({
       ok: true,
-      method: 'git-clone-fallback',
+      method: 'git-clone',
       localCloneMethod: 'git',
       snapshotFiles: expect.arrayContaining([
         'context/github/acme-rate-limited-ui/files/package.json',
@@ -2514,13 +2529,10 @@ printf 'font-data' > "$last/fonts/ubuntu/Ubuntu-Regular.ttf"
         'context/github/acme-rate-limited-ui/files/fonts/ubuntu/Ubuntu-Regular.ttf',
         'context/github/acme-rate-limited-ui/files/src/styles.css',
       ]),
-      warnings: expect.arrayContaining([
-        expect.stringContaining('CONNECTOR_RATE_LIMITED'),
-        expect.stringContaining('GitHub connector bounded intake produced no snapshot files.'),
-      ]),
+      warnings: [],
     }));
     const evidenceNote = await readFile(path.join(tmpDir, 'context/github/acme-rate-limited-ui.md'), 'utf8');
-    expect(evidenceNote).toContain('shallow local clone fallback');
+    expect(evidenceNote).toContain('This-device intake was used through local git or GitHub CLI.');
     expect(evidenceNote).toContain('Source Evidence Inventory');
     expect(evidenceNote).toContain('Brand assets and icons');
     expect(evidenceNote).toContain('root `build/` with their original filenames');
@@ -2538,7 +2550,7 @@ printf 'font-data' > "$last/fonts/ubuntu/Ubuntu-Regular.ttf"
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('uses GitHub CLI authenticated clone when connector access fails', async () => {
+  it('uses GitHub CLI authenticated clone before connector fallback', async () => {
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'od-connectors-cli-'));
     process.chdir(tmpDir);
     process.env.OD_DAEMON_URL = 'http://127.0.0.1:7456';
@@ -2602,7 +2614,7 @@ exit 1
     const stdout = JSON.parse(stdoutOutput.join(''));
     expect(stdout).toEqual(expect.objectContaining({
       ok: true,
-      method: 'git-clone-fallback',
+      method: 'git-clone',
       localCloneMethod: 'gh-cli',
       snapshotFiles: expect.arrayContaining([
         'context/github/acme-private-ui/files/package.json',
@@ -2610,12 +2622,12 @@ exit 1
       ]),
       warnings: expect.arrayContaining([
         expect.stringContaining('GitHub CLI clone'),
-        expect.stringContaining('repository access denied'),
       ]),
     }));
     await expect(readFile(path.join(tmpDir, 'context/github/acme-private-ui.md'), 'utf8')).resolves.toContain('GitHub CLI authenticated clone');
+    await expect(readFile(path.join(tmpDir, 'context/github/acme-private-ui.md'), 'utf8')).resolves.toContain('This-device intake was used through local git or GitHub CLI.');
     await expect(readFile(path.join(tmpDir, 'context/github/acme-private-ui/files/src/theme.css'), 'utf8')).resolves.toContain('--color-brand');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).not.toHaveBeenCalled();
 
     await rm(tmpDir, { recursive: true, force: true });
   });
@@ -2667,7 +2679,7 @@ exit 1
     const result = await runConnectorsToolCli(['github-design-context', '--repo', 'acme/private-ui', '--require-connector']);
 
     expect(result.exitCode).toBe(1);
-    expect(stderrOutput.join('')).toContain('Required GitHub repository intake could not read the repository through connector, git, or GitHub CLI');
+    expect(stderrOutput.join('')).toContain('Required GitHub repository intake could not read the repository through git, GitHub CLI, or connector');
     expect(stderrOutput.join('')).toContain('gh auth login --web');
     await expect(readFile(path.join(tmpDir, 'context/github/acme-private-ui.md'), 'utf8')).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(2);

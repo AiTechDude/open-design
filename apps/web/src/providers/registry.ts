@@ -610,9 +610,11 @@ export async function fetchConnectors(): Promise<ConnectorDetail[]> {
   }
 }
 
-export async function fetchConnectorStatuses(): Promise<ConnectorStatusResponse['statuses']> {
+export async function fetchConnectorStatuses(options?: {
+  signal?: AbortSignal;
+}): Promise<ConnectorStatusResponse['statuses']> {
   try {
-    const resp = await fetch('/api/connectors/status');
+    const resp = await fetch('/api/connectors/status', { signal: options?.signal });
     if (!resp.ok) return {};
     const json = (await resp.json()) as ConnectorStatusResponse;
     return json.statuses ?? {};

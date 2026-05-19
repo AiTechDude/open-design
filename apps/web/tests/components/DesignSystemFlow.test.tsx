@@ -170,7 +170,7 @@ describe('design system package audit helpers', () => {
 });
 
 describe('DesignSystemCreationFlow', () => {
-  it('keeps extraction and build work out of the create page before handing off to the project chat', async () => {
+  it('opens the project as soon as the workspace exists and prepares the first chat task afterward', async () => {
     const system: DesignSystemDetail = {
       id: 'user:acme-design-system',
       title: 'Acme Design System',
@@ -212,11 +212,13 @@ describe('DesignSystemCreationFlow', () => {
     mocks.ensureDesignSystemWorkspace.mockResolvedValue({ project, files: [] });
     mocks.patchProject.mockResolvedValue({ ...project, pendingPrompt: 'Create this project as a design system.' });
     const onCreated = vi.fn();
+    const onProjectPrepared = vi.fn();
 
     render(
       <DesignSystemCreationFlow
         onBack={() => {}}
         onCreated={onCreated}
+        onProjectPrepared={onProjectPrepared}
       />,
     );
 
@@ -229,11 +231,12 @@ describe('DesignSystemCreationFlow', () => {
     fireEvent.click(screen.getByText('Generate'));
 
     await waitFor(() => expect(screen.getByText('Opening project...')).toBeTruthy());
-    expect(onCreated).not.toHaveBeenCalled();
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(project.id, project));
     expect(screen.queryByText('Creating your design system...')).toBeNull();
     expect(screen.queryByText('Opening project chat...')).toBeNull();
     expect(screen.queryByText('Updated todos')).toBeNull();
     expect(mocks.patchProject).not.toHaveBeenCalled();
+    expect(onProjectPrepared).not.toHaveBeenCalled();
 
     resolveManifestWrite({
       name: 'context/source-context.md',
@@ -242,13 +245,18 @@ describe('DesignSystemCreationFlow', () => {
       kind: 'document',
       mime: 'text/markdown',
     });
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(project.id));
-    expect(mocks.patchProject).toHaveBeenCalledWith(
+    await waitFor(() => expect(mocks.patchProject).toHaveBeenCalledWith(
       project.id,
       expect.objectContaining({
         pendingPrompt: expect.stringContaining('Create this project as a complete Open Design design system workspace.'),
       }),
-    );
+    ));
+    await waitFor(() => expect(onProjectPrepared).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: project.id,
+        pendingPrompt: 'Create this project as a design system.',
+      }),
+    ));
   });
 
   it('creates a project-backed design system and hands the first task to the normal project chat', async () => {
@@ -302,7 +310,7 @@ describe('DesignSystemCreationFlow', () => {
     fireEvent.click(screen.getByText('Continue to generation'));
     fireEvent.click(screen.getByText('Generate'));
 
-    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(project.id));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(project.id, project));
 
     expect(mocks.createDesignSystemDraft).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -313,6 +321,7 @@ describe('DesignSystemCreationFlow', () => {
       }),
     );
     expect(mocks.ensureDesignSystemWorkspace).toHaveBeenCalledWith(system.id);
+    await waitFor(() => expect(mocks.writeProjectTextFile).toHaveBeenCalled());
     expect(mocks.writeProjectTextFile).toHaveBeenCalledWith(
       project.id,
       'context/source-context.md',
@@ -746,7 +755,7 @@ describe('DesignSystemCreationFlow', () => {
       expect.stringContaining('Placeholder component shells are not sufficient'),
     );
     expect(window.sessionStorage.getItem(`od:auto-send-first:${project.id}`)).toBe('1');
-    expect(onCreated).toHaveBeenCalledWith(project.id);
+    expect(onCreated).toHaveBeenCalledWith(project.id, project);
     expect(onSystemsRefresh).toHaveBeenCalled();
   });
 
@@ -903,7 +912,7 @@ describe('DesignSystemCreationFlow', () => {
       expect.stringContaining('context/local-code/comfyui/src/tokens.css'),
     );
     expect(window.sessionStorage.getItem(`od:auto-send-first:${project.id}`)).toBe('1');
-    expect(onCreated).toHaveBeenCalledWith(project.id);
+    expect(onCreated).toHaveBeenCalledWith(project.id, project);
   });
 
   it('recursively reads a dragged local code folder into the design-system project context', async () => {
@@ -1226,6 +1235,7 @@ describe('DesignSystemCreationFlow', () => {
         title: 'https Design System',
       }),
     );
+    await waitFor(() => expect(mocks.writeProjectTextFile).toHaveBeenCalled());
     expect(mocks.writeProjectTextFile).toHaveBeenCalledWith(
       project.id,
       'context/source-context.md',
@@ -1256,15 +1266,23 @@ describe('DesignSystemCreationFlow', () => {
 
     const input = screen.getByPlaceholderText('https://github.com/owner/repo') as HTMLInputElement;
     expect(input.disabled).toBe(false);
-    expect(screen.getByText('Local GitHub intake available')).toBeTruthy();
-    expect(screen.getByText(/local git or GitHub CLI auth can still snapshot repos/i)).toBeTruthy();
+    expect(screen.getByText('Repository access: Auto')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show access methods' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Configure Composio' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show access methods' }));
+    expect(screen.getByText('This device')).toBeTruthy();
+    expect(screen.getByText('Open Design account')).toBeTruthy();
+    expect(screen.getByText('Connector platform')).toBeTruthy();
+    expect(screen.getByText('Coming soon')).toBeTruthy();
+    expect(screen.getByText('Not configured')).toBeTruthy();
 
     fireEvent.change(input, { target: { value: 'https://github.com/nexu-io/open-design/' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(screen.getByText('nexu-io/open-design')).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Configure Composio key' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Configure Composio' }));
 
     expect(onOpenConnectorsTab).toHaveBeenCalledTimes(1);
     expect(mocks.fetchConnectorStatuses).not.toHaveBeenCalled();
@@ -1295,12 +1313,15 @@ describe('DesignSystemCreationFlow', () => {
         />,
       );
 
-      expect(screen.getByText('Checking GitHub connector')).toBeTruthy();
+      expect(screen.getByText('Repository access: Auto')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'Show access methods' }));
+      expect(screen.queryByText('Checking GitHub connector')).toBeNull();
 
-      await waitFor(() => expect(screen.getByText('Composio key configured')).toBeTruthy());
+      await waitFor(() => expect(screen.getByText('Needs attention')).toBeTruthy());
       expect(screen.queryByText('Checking GitHub connector')).toBeNull();
       expect(screen.getByText(/Could not finish checking GitHub connector/i)).toBeTruthy();
-      expect(screen.getByRole('button', { name: 'Connect GitHub' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Connect via Composio' })).toBeTruthy();
+      expect(mocks.fetchConnectorStatuses.mock.calls[0]?.[0]?.signal?.aborted).toBe(true);
     } finally {
       timeoutSpy.mockRestore();
     }
@@ -1325,9 +1346,10 @@ describe('DesignSystemCreationFlow', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText('Composio key configured')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Show access methods' }));
+    await waitFor(() => expect(screen.getByText('Needs attention')).toBeTruthy());
     expect(screen.getByText('GitHub authorization expired. Reconnect GitHub.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Connect GitHub' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Connect via Composio' })).toBeTruthy();
   });
 
   it('keeps GitHub repo links available and shows connected connector status', async () => {
@@ -1357,13 +1379,14 @@ describe('DesignSystemCreationFlow', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Connect GitHub' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Show access methods' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Connect via Composio' })).toBeTruthy());
     expect((screen.getByPlaceholderText('https://github.com/owner/repo') as HTMLInputElement).disabled).toBe(false);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Connect via Composio' }));
 
     await waitFor(() => expect(mocks.connectConnector).toHaveBeenCalledWith('github'));
-    await waitFor(() => expect(screen.getByText('Connected as qiongyu1999')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/Connected as qiongyu1999/i)).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Configure' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy();
     const input = screen.getByPlaceholderText('https://github.com/owner/repo') as HTMLInputElement;
@@ -1392,7 +1415,8 @@ describe('DesignSystemCreationFlow', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText('GitHub connected')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Show access methods' }));
+    await waitFor(() => expect(screen.getByText('Connected')).toBeTruthy());
     expect(screen.queryByText(/ca_6U6mv_8IzMVR/)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Configure' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Disconnect' })).toBeTruthy();
@@ -1431,13 +1455,14 @@ describe('DesignSystemCreationFlow', () => {
         />,
       );
 
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Connect GitHub' })).toBeTruthy());
-      fireEvent.click(screen.getByRole('button', { name: 'Connect GitHub' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Show access methods' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Connect via Composio' })).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: 'Connect via Composio' }));
 
-      await waitFor(() => expect(screen.getByText('GitHub authorization pending')).toBeTruthy());
+      await waitFor(() => expect(screen.getByText('Pending')).toBeTruthy());
       expect(screen.getByText('Popup blocked. Allow popups for Open Design and try again.')).toBeTruthy();
 
-      fireEvent.click(screen.getByRole('button', { name: 'Open authorization page' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Open authorization' }));
 
       expect(openSpy).toHaveBeenCalledWith('https://example.com/oauth', '_blank');
     } finally {
@@ -1500,7 +1525,8 @@ describe('DesignSystemCreationFlow', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText('Connected as qiongyu1999')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Show access methods' }));
+    await waitFor(() => expect(screen.getByText(/Connected as qiongyu1999/i)).toBeTruthy());
     fireEvent.change(screen.getByPlaceholderText(/Mission Impastabowl/i), {
       target: { value: 'GitHub: product workspace' },
     });
@@ -1551,7 +1577,7 @@ describe('DesignSystemCreationFlow', () => {
     expect(mocks.patchProject).toHaveBeenCalledWith(
       project.id,
       expect.objectContaining({
-        pendingPrompt: expect.stringContaining('Large repositories can trigger `CONNECTOR_OUTPUT_TOO_LARGE`; the bounded intake command is the only allowed GitHub repository intake path for this workflow.'),
+        pendingPrompt: expect.stringContaining('The command tries this-device access first'),
       }),
     );
     expect(mocks.writeProjectTextFile).toHaveBeenCalledWith(
@@ -1562,13 +1588,13 @@ describe('DesignSystemCreationFlow', () => {
     expect(mocks.patchProject).toHaveBeenCalledWith(
       project.id,
       expect.objectContaining({
-        pendingPrompt: expect.stringContaining('If you already hit `CONNECTOR_OUTPUT_TOO_LARGE` or `CONNECTOR_RATE_LIMITED` from a direct connector call, do not stop and do not retry the same direct tool.'),
+        pendingPrompt: expect.stringContaining('Do not call GitHub connector tree/content/raw tools directly from the agent.'),
       }),
     );
     expect(mocks.patchProject).toHaveBeenCalledWith(
       project.id,
       expect.objectContaining({
-        pendingPrompt: expect.stringContaining('The command may use a shallow local clone fallback after connector output is unavailable, permission-blocked, rate-limited, or oversized.'),
+        pendingPrompt: expect.stringContaining('Treat `Read method: git-clone` as the preferred this-device path.'),
       }),
     );
     expect(mocks.patchProject).toHaveBeenCalledWith(
@@ -1655,7 +1681,8 @@ describe('DesignSystemCreationFlow', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByText('GitHub connected')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Show access methods' }));
+    await waitFor(() => expect(screen.getByText('Connected')).toBeTruthy());
     fireEvent.change(screen.getByPlaceholderText(/Mission Impastabowl/i), {
       target: { value: 'GitHub: product workspace' },
     });

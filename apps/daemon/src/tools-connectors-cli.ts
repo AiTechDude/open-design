@@ -100,7 +100,7 @@ interface GithubDesignEvidence {
   repo: ParsedGitHubRepo;
   ref?: string;
   resolvedRef?: string;
-  method: 'connector' | 'git-clone-fallback';
+  method: 'connector' | 'git-clone';
   localCloneMethod?: 'git' | 'gh-cli';
   repositoryMetadata?: JsonObject;
   readme?: { path: string; content: string };
@@ -865,7 +865,7 @@ async function collectGithubEvidenceWithConnector(
 
 async function collectGithubEvidenceWithGitClone(
   repo: ParsedGitHubRepo,
-  options: { ref?: string; maxFiles: number; reason: string; warnings?: string[] },
+  options: { ref?: string; maxFiles: number; reason?: string; warnings?: string[] },
 ): Promise<GithubDesignEvidence> {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'od-github-context-'));
   const cloneDir = path.join(tmpDir, 'repo');
@@ -910,7 +910,7 @@ async function collectGithubEvidenceWithGitClone(
       repo,
       ...(options.ref === undefined ? {} : { ref: options.ref }),
       ...(options.ref === undefined ? {} : { resolvedRef: options.ref }),
-      method: 'git-clone-fallback',
+      method: 'git-clone',
       localCloneMethod: clone.method,
       ...(readme === undefined ? {} : { readme }),
       treePaths: paths,
@@ -918,7 +918,7 @@ async function collectGithubEvidenceWithGitClone(
       warnings: [
         ...(options.warnings ?? []),
         ...clone.warnings,
-        `Connector intake could not produce enough local snapshots; used shallow local clone fallback. Reason: ${options.reason}`,
+        ...(options.reason ? [`This-device GitHub intake note: ${options.reason}`] : []),
       ],
     };
   } finally {
@@ -1366,8 +1366,8 @@ function renderGithubDesignEvidenceMarkdown(evidence: GithubDesignEvidence): str
     '## Intake Status',
     '',
     evidence.method === 'connector'
-      ? '- GitHub connector was used through `od tools connectors`.'
-      : '- Connector intake could not complete; a shallow local clone fallback was used.',
+      ? '- Connector platform fallback was used through `od tools connectors`.'
+      : '- This-device intake was used through local git or GitHub CLI.',
   ];
   if (evidence.warnings.length > 0) {
     lines.push('', '## Warnings', '', ...evidence.warnings.map((warning) => `- ${warning}`));
@@ -1598,52 +1598,57 @@ async function runGithubDesignContext(options: ParsedOptions): Promise<ToolCliRe
   const token = toolToken();
   let evidence: GithubDesignEvidence;
 
-  if (!('error' in baseUrl) && typeof token === 'string') {
-    try {
-      evidence = await collectGithubEvidenceWithConnector(baseUrl, token, repo, {
-        ...(options.ref === undefined ? {} : { ref: options.ref }),
-        maxFiles,
-      });
-      if (connectorEvidenceNeedsCloneFallback(evidence)) {
-        evidence = await collectGithubEvidenceWithGitClone(repo, {
-          ...(options.ref === undefined ? {} : { ref: options.ref }),
-          maxFiles,
-          reason: 'GitHub connector bounded intake produced no snapshot files.',
-          warnings: evidence.warnings,
-        });
-      }
-    } catch (error) {
-      const connectorReason = error instanceof Error ? error.message : String(error);
-      try {
-        evidence = await collectGithubEvidenceWithGitClone(repo, {
-          ...(options.ref === undefined ? {} : { ref: options.ref }),
-          maxFiles,
-          reason: connectorReason,
-        });
-      } catch (cloneError) {
-        const cloneReason = cloneError instanceof Error ? cloneError.message : String(cloneError);
-        if (options.requireConnector) {
-          return fail('Required GitHub repository intake could not read the repository through connector, git, or GitHub CLI', {
-            repo: `${repo.owner}/${repo.repo}`,
-            connectorReason,
-            cloneReason,
-            nextStep: 'Run `gh auth login --web` or configure local git credentials with access to this repository, then rerun github-design-context. Do not draft design-system files from URL text alone.',
-          });
-        }
-        throw cloneError;
-      }
-    }
-  } else {
-    const reason = 'error' in baseUrl
-      ? baseUrl.error
-      : typeof token === 'string'
-        ? 'OD_TOOL_TOKEN is not available'
-        : token.error;
+  try {
     evidence = await collectGithubEvidenceWithGitClone(repo, {
       ...(options.ref === undefined ? {} : { ref: options.ref }),
       maxFiles,
-      reason,
     });
+  } catch (localError) {
+    const localReason = localError instanceof Error ? localError.message : String(localError);
+    const connectorReady = !('error' in baseUrl) && typeof token === 'string';
+    if (connectorReady) {
+      let connectorReason: string | undefined;
+      try {
+        evidence = await collectGithubEvidenceWithConnector(baseUrl, token, repo, {
+          ...(options.ref === undefined ? {} : { ref: options.ref }),
+          maxFiles,
+        });
+        if (connectorEvidenceNeedsCloneFallback(evidence)) {
+          throw new Error('GitHub connector bounded intake produced no snapshot files.');
+        }
+        evidence.warnings.unshift(
+          `This-device GitHub intake failed; used Composio GitHub connector fallback. Reason: ${localReason}`,
+        );
+      } catch (connectorError) {
+        connectorReason = connectorError instanceof Error ? connectorError.message : String(connectorError);
+        if (options.requireConnector) {
+          return fail('Required GitHub repository intake could not read the repository through git, GitHub CLI, or connector', {
+            repo: `${repo.owner}/${repo.repo}`,
+            localReason,
+            connectorReason,
+            nextStep: 'Run `gh auth login --web`, configure local git credentials, or connect GitHub through Composio with access to this repository. Do not draft design-system files from URL text alone.',
+          });
+        }
+        throw new Error(
+          `GitHub repository intake failed through this device and connector fallback. This device: ${localReason}; Connector: ${connectorReason}`,
+        );
+      }
+    } else {
+      const connectorReason = 'error' in baseUrl
+        ? baseUrl.error
+        : typeof token === 'string'
+          ? 'OD_TOOL_TOKEN is not available'
+          : token.error;
+      if (options.requireConnector) {
+        return fail('Required GitHub repository intake could not read the repository through git, GitHub CLI, or connector', {
+          repo: `${repo.owner}/${repo.repo}`,
+          localReason,
+          connectorReason,
+          nextStep: 'Run `gh auth login --web`, configure local git credentials, or connect GitHub through Composio with access to this repository. Do not draft design-system files from URL text alone.',
+        });
+      }
+      throw localError;
+    }
   }
 
   const written = await writeGithubDesignEvidence(outputPath, evidence);
