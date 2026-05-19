@@ -136,6 +136,7 @@ export interface Dict {
   'settings.onboardingPromptBody': string;
   'settings.onboardingProfileTitle': string;
   'settings.onboardingProfileBody': string;
+  'settings.onboardingRoleLabel': string;
   'settings.onboardingOrgSizeLabel': string;
   'settings.onboardingUseCaseLabel': string;
   'settings.onboardingSourceLabel': string;
@@ -147,6 +148,15 @@ export interface Dict {
   'settings.onboardingOrgGrowth': string;
   'settings.onboardingOrgMidMarket': string;
   'settings.onboardingOrgEnterprise': string;
+  'settings.onboardingRolePm': string;
+  'settings.onboardingRoleDesigner': string;
+  'settings.onboardingRoleEngineer': string;
+  'settings.onboardingRoleMarketing': string;
+  'settings.onboardingRoleGrowth': string;
+  'settings.onboardingRoleOps': string;
+  'settings.onboardingRoleFounder': string;
+  'settings.onboardingRoleStudent': string;
+  'settings.onboardingRoleOther': string;
   'settings.onboardingUseProduct': string;
   'settings.onboardingUseDesignSystem': string;
   'settings.onboardingUsePrototype': string;
