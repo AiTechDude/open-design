@@ -303,6 +303,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Cache Playwright browser binaries between runs. The key follows the
+      # @playwright/test version so browser revisions update with package bumps.
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: |
+          version=$(node -p "require('./e2e/package.json').devDependencies['@playwright/test'].replace(/[^0-9.]/g,'')")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+
       - name: Install Playwright browsers
         run: pnpm -C e2e exec playwright install --with-deps chromium
 
@@ -341,6 +355,20 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Cache Playwright browser binaries between runs. The key follows the
+      # @playwright/test version so browser revisions update with package bumps.
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: |
+          version=$(node -p "require('./e2e/package.json').devDependencies['@playwright/test'].replace(/[^0-9.]/g,'')")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
 
       - name: Install Playwright browsers
         run: pnpm -C e2e exec playwright install --with-deps chromium
