@@ -41,6 +41,11 @@ function safeUsername(): string | undefined {
   }
 }
 
+export const STANDALONE_LAUNCH_WARNING =
+  "Daemon started without a sidecar runtime (plain `od` / standalone launch); " +
+  "file-based logs are not captured. Re-run via `pnpm tools-dev` or the packaged " +
+  "desktop app to include daemon/web/desktop log files in the bundle.";
+
 function buildSidecarLogSources(runtime: SidecarRuntimeContext<SidecarStamp> | null): LogSource[] {
   if (runtime == null) return [];
   const namespaceRoot = resolveNamespaceRoot({
@@ -103,6 +108,7 @@ export function createDiagnosticsExportHandler(options: DiagnosticsHandlerOption
             base: options.runtime?.base ?? null,
             projectRoot: options.projectRoot,
           },
+          warnings: options.runtime == null ? [STANDALONE_LAUNCH_WARNING] : undefined,
         },
         sources,
         redaction: { username },

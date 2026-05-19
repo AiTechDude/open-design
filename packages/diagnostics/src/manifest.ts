@@ -21,6 +21,13 @@ export interface DiagnosticsContext {
   daemonReachable?: boolean | undefined;
   /** Free-form flags or notes. Will be JSON-stringified into the manifest. */
   extra?: Record<string, unknown> | undefined;
+  /**
+   * Upstream warnings to merge into the manifest's `warnings` array.
+   * Useful when the host knows a category of data is unavailable (e.g.
+   * file logs in non-sidecar launches) and wants to surface that fact
+   * without producing fake "missing file" entries.
+   */
+  warnings?: string[] | undefined;
 }
 
 export interface DiagnosticsManifest {
@@ -55,7 +62,7 @@ export interface MachineInfo {
 }
 
 export function buildManifest(context: DiagnosticsContext, files: CollectedFile[]): DiagnosticsManifest {
-  const warnings: string[] = [];
+  const warnings: string[] = [...(context.warnings ?? [])];
   for (const file of files) {
     if (file.error) warnings.push(`${file.name}: ${file.error}`);
   }
