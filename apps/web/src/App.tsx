@@ -896,7 +896,6 @@ export function App() {
 
   const handleImportFolder = useCallback(async (baseDir: string) => {
     const result = await importFolderProject({ baseDir });
-    if (!result) return;
     setProjects((curr) => [result.project, ...curr.filter((p) => p.id !== result.project.id)]);
     navigate({
       kind: 'project',
