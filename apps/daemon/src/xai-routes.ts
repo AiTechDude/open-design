@@ -15,6 +15,9 @@
 //                                     when xAI shows a code instead of
 //                                     redirecting (the common case for
 //                                     loopback redirect_uri)
+//   POST /api/xai/oauth/cancel      — stop the in-flight :56121 listener
+//                                     without touching any stored token
+//                                     (UI Cancel button)
 //   GET  /api/xai/auth/status       — has-token / expiry / in-flight bit
 //   POST /api/xai/oauth/disconnect  — wipe stored token, stop listener
 //   POST /api/xai/search            — search X posts via Grok's native
@@ -188,6 +191,24 @@ export function registerXaiRoutes(app: Express, ctx: RegisterXaiRoutesDeps) {
         savedAt: tok.savedAt,
         listening: activeListener !== null,
       });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: msg });
+    }
+  });
+
+  app.post('/api/xai/oauth/cancel', async (req, res) => {
+    if (!isLocalSameOrigin(req, getResolvedPort())) {
+      return res.status(403).json({ error: 'cross-origin request rejected' });
+    }
+    // Cancel only stops the in-flight loopback listener. It must NOT
+    // wipe the stored token — a user clicking Cancel mid-Reconnect
+    // would otherwise lose their existing SuperGrok grant. Disconnect
+    // is the destructive path; this one only releases the singleton
+    // :56121 port so a new Sign in (or Hermes) can grab it.
+    try {
+      await stopActiveListener();
+      res.json({ ok: true });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(500).json({ error: msg });

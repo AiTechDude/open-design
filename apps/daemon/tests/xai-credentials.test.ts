@@ -135,7 +135,7 @@ describe('resolveXAIBearer', () => {
     expect(resolved).toBeNull();
   });
 
-  it('keeps the old refresh_token when the refresh response omits it', async () => {
+  it('preserves the existing refresh_token when the refresh response omits it', async () => {
     const stored: StoredXAIToken = {
       accessToken: 'old-bearer',
       tokenType: 'Bearer',
@@ -147,8 +147,10 @@ describe('resolveXAIBearer', () => {
 
     const resolved = await resolveXAIBearer(
       dataDir,
-      // Some token endpoints omit refresh_token in the refresh response;
-      // we should still accept the new access_token but not crash.
+      // Some token endpoints omit refresh_token in the refresh response
+      // (RFC 6749 §6 lets the server keep the old one valid).
+      // resolveXAIBearer must carry the previous refresh_token forward
+      // so the next expiry can still refresh.
       fetchOk({ access_token: 'new-bearer', token_type: 'Bearer' }),
     );
     expect(resolved?.accessToken).toBe('new-bearer');
@@ -157,10 +159,9 @@ describe('resolveXAIBearer', () => {
     const onDisk = JSON.parse(
       await readFile(path.join(dataDir, 'xai-tokens.json'), 'utf8'),
     );
-    // Without refresh_token we drop it from disk — that matches the
-    // wire response. The user will need to re-login if their next call
-    // also goes expired.
-    expect(onDisk.token.refreshToken).toBeUndefined();
+    // Old refresh_token must survive the partial refresh response so
+    // the next expiry doesn't kick the user back through Sign in.
+    expect(onDisk.token.refreshToken).toBe('rt-1');
     // expires_in not in response → we don't fabricate one.
     expect(onDisk.token.expiresAt).toBeUndefined();
   });

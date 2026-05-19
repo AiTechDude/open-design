@@ -85,6 +85,20 @@ async function disconnectOAuth(): Promise<boolean> {
   }
 }
 
+async function cancelInFlightOAuth(): Promise<void> {
+  // Best-effort. If the daemon is unreachable the listener will still
+  // self-close on its 30 min timeout; we don't surface a failure to
+  // the user because Cancel is a UX affordance, not a critical action.
+  try {
+    await fetch('/api/xai/oauth/cancel', {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+  } catch {
+    // ignore
+  }
+}
+
 async function completeOAuthManual(
   state: string,
   code: string,
@@ -232,6 +246,10 @@ export function XaiOAuthControl() {
   };
 
   const onCancelPending = () => {
+    // Tell the daemon to stop its one-shot 127.0.0.1:56121 listener so
+    // the singleton port doesn't sit pinned for the full 30 min server
+    // timeout. Fire-and-forget — UI state clears immediately either way.
+    void cancelInFlightOAuth();
     setPendingAuthUrl(null);
     setPendingState(null);
     setPasteCode('');

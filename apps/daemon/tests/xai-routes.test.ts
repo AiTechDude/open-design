@@ -442,6 +442,63 @@ describe('xai-routes', () => {
     expect((await jsonOf(r)).error).toMatch(/xAI 429/);
   });
 
+  it('POST /api/xai/oauth/cancel stops the listener without touching the stored token', async () => {
+    const startResp = await fetch(`${app.baseUrl}/api/xai/oauth/start`, {
+      method: 'POST',
+    });
+    const { state } = await jsonOf(startResp);
+
+    globalThis.fetch = vi.fn(async (input: any, init?: any) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === XAI_OAUTH_TOKEN_ENDPOINT) {
+        return new Response(
+          JSON.stringify({
+            access_token: 'persisted-bearer',
+            token_type: 'Bearer',
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
+
+    // Stage a real connected state via the paste-back path so we have a
+    // token on disk, then start a *second* OAuth flow (which opens a
+    // new listener) and Cancel it.
+    await onCallbackHolder.current!({ kind: 'ok', code: 'c', state });
+    let status = await fetch(`${app.baseUrl}/api/xai/auth/status`).then((r) =>
+      jsonOf(r),
+    );
+    expect(status.connected).toBe(true);
+
+    // Open another OAuth flow — that opens a new listener.
+    await fetch(`${app.baseUrl}/api/xai/oauth/start`, { method: 'POST' });
+    stopMock.mockClear();
+
+    const cancelResp = await fetch(`${app.baseUrl}/api/xai/oauth/cancel`, {
+      method: 'POST',
+    });
+    expect(cancelResp.status).toBe(200);
+    expect((await jsonOf(cancelResp)).ok).toBe(true);
+    expect(stopMock).toHaveBeenCalled();
+
+    // Token survives — Cancel is non-destructive.
+    status = await fetch(`${app.baseUrl}/api/xai/auth/status`).then((r) =>
+      jsonOf(r),
+    );
+    expect(status.connected).toBe(true);
+    expect(status.listening).toBe(false);
+  });
+
+  it('POST /api/xai/oauth/cancel is a no-op when no listener is in flight', async () => {
+    const r = await fetch(`${app.baseUrl}/api/xai/oauth/cancel`, {
+      method: 'POST',
+    });
+    expect(r.status).toBe(200);
+    expect((await jsonOf(r)).ok).toBe(true);
+  });
+
   it('POST /api/xai/oauth/disconnect wipes a stored token', async () => {
     const startResp = await fetch(`${app.baseUrl}/api/xai/oauth/start`, {
       method: 'POST',
@@ -587,10 +644,11 @@ describe('xai-routes — cross-origin guard', () => {
     await rm(projectRoot, { recursive: true, force: true });
   });
 
-  it('rejects all five endpoints when isLocalSameOrigin is false', async () => {
+  it('rejects all six endpoints when isLocalSameOrigin is false', async () => {
     const cases: ReadonlyArray<readonly [string, string]> = [
       ['POST', '/api/xai/oauth/start'],
       ['POST', '/api/xai/oauth/complete'],
+      ['POST', '/api/xai/oauth/cancel'],
       ['GET', '/api/xai/auth/status'],
       ['POST', '/api/xai/oauth/disconnect'],
       ['POST', '/api/xai/search'],

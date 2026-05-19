@@ -57,7 +57,14 @@ export async function resolveXAIBearer(
       tokenType: fresh.token_type ?? 'Bearer',
       savedAt: Date.now(),
     };
-    if (fresh.refresh_token) next.refreshToken = fresh.refresh_token;
+    // Preserve the existing refresh_token when the token endpoint omits
+    // one in its response. RFC 6749 §6 lets a server skip refresh_token
+    // rotation and keep the old one valid; if we dropped it here the
+    // next expiry would have nothing to refresh against and force the
+    // user back through the full Sign in flow even though their grant
+    // is still good.
+    const carriedRefresh = fresh.refresh_token ?? stored.refreshToken;
+    if (carriedRefresh) next.refreshToken = carriedRefresh;
     if (typeof fresh.expires_in === 'number') {
       next.expiresAt = Date.now() + fresh.expires_in * 1000;
     }
