@@ -113,12 +113,6 @@ export interface Dict {
   'settings.onboardingConnectTitle': string;
   'settings.onboardingConnectBody': string;
   'settings.onboardingRecommended': string;
-  'settings.onboardingAmrTitle': string;
-  'settings.onboardingAmrBody': string;
-  'settings.onboardingAmrAction': string;
-  'settings.onboardingAmrWaitingTitle': string;
-  'settings.onboardingAmrWaitingBody': string;
-  'settings.onboardingAmrOpenAgain': string;
   'settings.onboardingLocalTitle': string;
   'settings.onboardingLocalBody': string;
   'settings.onboardingLocalAction': string;

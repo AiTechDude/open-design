@@ -76,8 +76,6 @@ import type { KnownProvider } from '../state/config';
 import { testApiProvider } from '../providers/connection-test';
 import { fetchProviderModels } from '../providers/provider-models';
 
-const AMR_MOCK_LOGIN_URL = 'https://amr.open.design/login?mock=1';
-
 // The topbar chips (GitHub star, model switcher, Use everywhere)
 // collapse into the settings dropdown when the viewport gets
 // narrow. The transition is driven entirely by CSS @media queries
@@ -662,10 +660,9 @@ function OnboardingView({
 }) {
   const t = useT();
   const [step, setStep] = useState(0);
-  const [runtime, setRuntime] = useState<'amr' | 'local' | 'byok' | null>('amr');
+  const [runtime, setRuntime] = useState<'local' | 'byok' | null>(null);
   const [designSource, setDesignSource] = useState<'github' | 'upload' | 'prompt' | null>(null);
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
-  const [amrLoginPending, setAmrLoginPending] = useState(false);
   const [cliScanStatus, setCliScanStatus] = useState<'idle' | 'scanning' | 'done'>('idle');
   const [visibleAgentIds, setVisibleAgentIds] = useState<string[]>([]);
   const [providerTestState, setProviderTestState] = useState<
@@ -687,8 +684,6 @@ function OnboardingView({
     source: '',
   });
   const agentRevealTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
-  const amrLoginTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const amrLoginTokenRef = useRef(0);
   const cliScanTokenRef = useRef(0);
   const apiProtocol = config.apiProtocol ?? 'anthropic';
   const providerTestInputKey = [
@@ -739,10 +734,6 @@ function OnboardingView({
     return () => {
       agentRevealTimersRef.current.forEach((timer) => clearTimeout(timer));
       agentRevealTimersRef.current = [];
-      if (amrLoginTimerRef.current) {
-        clearTimeout(amrLoginTimerRef.current);
-        amrLoginTimerRef.current = null;
-      }
     };
   }, []);
 
@@ -754,21 +745,12 @@ function OnboardingView({
   const isLastStep = step === steps.length - 1;
 
   const runtimeItems: Array<{
-    id: 'amr' | 'local' | 'byok';
-    icon: 'orbit' | 'hammer' | 'sliders';
+    id: 'local' | 'byok';
+    icon: 'hammer' | 'sliders';
     title: string;
     body: string;
-    recommended?: boolean;
     onSelect: () => void;
   }> = [
-    {
-      id: 'amr',
-      icon: 'orbit',
-      title: t('settings.onboardingAmrTitle'),
-      body: t('settings.onboardingAmrBody'),
-      recommended: true,
-      onSelect: () => setRuntime('amr'),
-    },
     {
       id: 'local',
       icon: 'hammer',
@@ -784,7 +766,6 @@ function OnboardingView({
       title: t('settings.onboardingByokTitle'),
       body: t('settings.onboardingByokBody'),
       onSelect: () => {
-        cancelAmrLoginMock();
         setRuntime('byok');
         onModeChange('api');
       },
@@ -820,8 +801,6 @@ function OnboardingView({
       onSelect: () => setDesignSource('prompt'),
     },
   ];
-  const amrItem = runtimeItems[0]!;
-  const alternativeRuntimeItems = runtimeItems.slice(1);
   const orgSizeOptions = [
     { value: 'solo', label: t('settings.onboardingOrgSolo') },
     { value: 'team', label: t('settings.onboardingOrgTeam') },
@@ -911,39 +890,7 @@ function OnboardingView({
     agentRevealTimersRef.current = [];
   }
 
-  function cancelAmrLoginMock() {
-    amrLoginTokenRef.current += 1;
-    if (amrLoginTimerRef.current) {
-      clearTimeout(amrLoginTimerRef.current);
-      amrLoginTimerRef.current = null;
-    }
-    setAmrLoginPending(false);
-  }
-
-  function openAmrLoginMock() {
-    const loginToken = amrLoginTokenRef.current + 1;
-    amrLoginTokenRef.current = loginToken;
-    if (amrLoginTimerRef.current) {
-      clearTimeout(amrLoginTimerRef.current);
-    }
-    setRuntime('amr');
-    setAmrLoginPending(true);
-    if (typeof window !== 'undefined') {
-      window.open(AMR_MOCK_LOGIN_URL, '_blank', 'noopener,noreferrer');
-    }
-    amrLoginTimerRef.current = setTimeout(() => {
-      if (amrLoginTokenRef.current !== loginToken) return;
-      amrLoginTimerRef.current = null;
-      setAmrLoginPending(false);
-      setStep((current) => (current === 0 ? 1 : current));
-    }, 5000);
-  }
-
   function handlePrimaryAction() {
-    if (step === 0 && runtime === 'amr') {
-      openAmrLoginMock();
-      return;
-    }
     if (isLastStep) {
       onFinish();
       return;
@@ -955,7 +902,6 @@ function OnboardingView({
     const scanToken = cliScanTokenRef.current + 1;
     cliScanTokenRef.current = scanToken;
     clearAgentRevealTimers();
-    cancelAmrLoginMock();
     setRuntime('local');
     onModeChange('daemon');
     setCliScanStatus('scanning');
@@ -1063,12 +1009,9 @@ function OnboardingView({
     }
   }
 
-  const primaryActionLabel =
-    step === 0 && runtime === 'amr' && amrLoginPending
-      ? t('settings.onboardingAmrOpenAgain')
-      : isLastStep
-        ? t('settings.onboardingFinish')
-        : t('settings.onboardingContinue');
+  const primaryActionLabel = isLastStep
+    ? t('settings.onboardingFinish')
+    : t('settings.onboardingContinue');
 
   return (
     <section className="onboarding-view" aria-labelledby="onboarding-title">
@@ -1098,17 +1041,8 @@ function OnboardingView({
                 body={t('settings.onboardingConnectBody')}
               />
               <div className="onboarding-view__runtime-stack">
-                <OnboardingChoiceCard
-                  icon={amrItem.icon}
-                  title={amrItem.title}
-                  body={amrItem.body}
-                  selected={runtime === amrItem.id}
-                  badge={t('settings.onboardingRecommended')}
-                  featured
-                  onClick={amrItem.onSelect}
-                />
                 <div className="onboarding-view__alternatives">
-                  {alternativeRuntimeItems.map((item) => (
+                  {runtimeItems.map((item) => (
                     <OnboardingChoiceCard
                       key={item.id}
                       icon={item.icon}
@@ -1119,15 +1053,6 @@ function OnboardingView({
                     />
                   ))}
                 </div>
-                {runtime === 'amr' && amrLoginPending ? (
-                  <div className="onboarding-view__handoff-status" role="status">
-                    <Icon name="spinner" size={16} className="icon-spin" />
-                    <span>
-                      <strong>{t('settings.onboardingAmrWaitingTitle')}</strong>
-                      <small>{t('settings.onboardingAmrWaitingBody')}</small>
-                    </span>
-                  </div>
-                ) : null}
                 {runtime === 'local' ? (
                   <OnboardingCliSetupPanel
                     agents={visibleAgents}
