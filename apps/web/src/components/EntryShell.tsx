@@ -315,7 +315,8 @@ export function EntryShell({
         ? payload.pluginTitle.trim()
         : fallbackName;
     const metadata: ProjectMetadata = {
-      kind: payload.projectKind ?? 'prototype',
+      ...(payload.projectMetadata ?? {}),
+      kind: payload.projectKind ?? payload.projectMetadata?.kind ?? 'prototype',
       ...(payload.contextPlugins && payload.contextPlugins.length > 0
         ? { contextPlugins: payload.contextPlugins }
         : {}),
@@ -451,6 +452,7 @@ export function EntryShell({
                 promptHandoff={homePromptHandoff}
                 skills={skills}
                 skillsLoading={skillsLoading}
+                promptTemplates={promptTemplates}
               />
             ) : null}
             {view === 'projects' ? (
@@ -459,7 +461,7 @@ export function EntryShell({
               ) : (
                 <div className="entry-section">
                   <header className="entry-section__head">
-                    <h1 className="entry-section__title">Projects</h1>
+                    <h1 className="entry-section__title">{t('entry.navProjects')}</h1>
                   </header>
                   <DesignsTab
                     projects={projects}

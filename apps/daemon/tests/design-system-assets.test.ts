@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   isDesignTokenChannelEnabled,
+  listDesignSystems,
+  readDesignSystem,
   readDesignSystemAssets,
   resolveDesignSystemAssets,
 } from '../src/design-systems.js';
@@ -27,6 +29,29 @@ function fresh(): string {
 function brandDir(root: string, id: string): string {
   const dir = path.join(root, id);
   mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function writeDesignSystemProject(
+  root: string,
+  id: string,
+  {
+    manifest,
+    design = '# Markdown Title\n\n> Category: Markdown Category\n> Markdown summary.\n',
+    tokens = ':root { --bg: #fff; }',
+    components = '<button>fixture</button>',
+  }: {
+    manifest?: Record<string, unknown>;
+    design?: string;
+    tokens?: string;
+    components?: string | null;
+  } = {},
+): string {
+  const dir = brandDir(root, id);
+  writeFileSync(path.join(dir, 'DESIGN.md'), design);
+  writeFileSync(path.join(dir, 'tokens.css'), tokens);
+  if (components !== null) writeFileSync(path.join(dir, 'components.html'), components);
+  if (manifest) writeFileSync(path.join(dir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   return dir;
 }
 
@@ -115,6 +140,99 @@ describe('readDesignSystemAssets', () => {
 
     const assets = await readDesignSystemAssets(root, 'partial');
     expect(assets.tokensCss).toBe(':root { --x: 1; }');
+    expect(assets.fixtureHtml).toBeUndefined();
+  });
+});
+
+describe('Design System Project manifest runtime consumption', () => {
+  it('uses manifest name/category/description for listings while still reading DESIGN.md body', async () => {
+    const root = fresh();
+    writeDesignSystemProject(root, 'project-system', {
+      manifest: {
+        schemaVersion: 'od-design-system-project/v1',
+        id: 'project-system',
+        name: 'Project System',
+        category: 'Imported',
+        description: 'Description from manifest.',
+        source: { type: 'local', path: '/tmp/project' },
+        files: {
+          design: 'DESIGN.md',
+          tokens: 'tokens.css',
+          components: 'components.html',
+        },
+      },
+      design: '# Markdown Title\n\n> Category: Markdown Category\n> Markdown summary.\n\nBody.\n',
+    });
+
+    const systems = await listDesignSystems(root);
+    expect(systems).toHaveLength(1);
+    expect(systems[0]).toMatchObject({
+      id: 'project-system',
+      title: 'Project System',
+      category: 'Imported',
+      summary: 'Description from manifest.',
+      body: '# Markdown Title\n\n> Category: Markdown Category\n> Markdown summary.\n\nBody.\n',
+    });
+
+    await expect(readDesignSystem(root, 'project-system')).resolves.toContain('# Markdown Title');
+  });
+
+  it('keeps DESIGN.md-only systems working next to project manifests', async () => {
+    const root = fresh();
+    writeDesignSystemProject(root, 'project-system', {
+      manifest: {
+        schemaVersion: 'od-design-system-project/v1',
+        id: 'project-system',
+        name: 'Project System',
+        category: 'Imported',
+        description: 'Description from manifest.',
+        source: { type: 'bundled' },
+        files: {
+          design: 'DESIGN.md',
+          tokens: 'tokens.css',
+        },
+      },
+      components: null,
+    });
+    writeDesignSystemProject(root, 'legacy-system', {
+      design: '# Legacy System\n\n> Category: Legacy\n> Legacy summary.\n\nBody.\n',
+      components: null,
+    });
+
+    const systems = await listDesignSystems(root);
+    expect(systems.map((s) => s.id).sort()).toEqual(['legacy-system', 'project-system']);
+    expect(systems.find((s) => s.id === 'legacy-system')).toMatchObject({
+      title: 'Legacy System',
+      category: 'Legacy',
+      summary: 'Legacy summary.',
+    });
+    expect(systems.find((s) => s.id === 'project-system')).toMatchObject({
+      title: 'Project System',
+      category: 'Imported',
+      summary: 'Description from manifest.',
+    });
+  });
+
+  it('reads manifest-declared tokens and skips missing optional components.html', async () => {
+    const root = fresh();
+    writeDesignSystemProject(root, 'tokens-only-project', {
+      manifest: {
+        schemaVersion: 'od-design-system-project/v1',
+        id: 'tokens-only-project',
+        name: 'Tokens Only Project',
+        category: 'Imported',
+        source: { type: 'bundled' },
+        files: {
+          design: 'DESIGN.md',
+          tokens: 'tokens.css',
+        },
+      },
+      tokens: ':root { --accent: #2F6FEB; }',
+      components: null,
+    });
+
+    const assets = await readDesignSystemAssets(root, 'tokens-only-project');
+    expect(assets.tokensCss).toBe(':root { --accent: #2F6FEB; }');
     expect(assets.fixtureHtml).toBeUndefined();
   });
 });
