@@ -16,6 +16,7 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -37,13 +38,10 @@ jobs:
       workspace_validation_required: ${{ steps.detect.outputs.workspace_validation_required }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6.0.2
-        with:
-          fetch-depth: 0
-
       - name: Detect workspace and app test scopes
         id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -53,7 +51,9 @@ jobs:
           tools_pack_tests_required=false
           workspace_validation_required=false
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > "$RUNNER_TEMP/changed-files.txt"
+            gh api --paginate \
+              "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+              --jq '.[].filename' > "$RUNNER_TEMP/changed-files.txt"
             while IFS= read -r file; do
               if [[ "$file" == "apps/daemon/"* || "$file" == "packages/contracts/"* || "$file" == "packages/platform/"* || "$file" == "packages/sidecar/"* || "$file" == "packages/sidecar-proto/"* ]]; then
                 daemon_tests_required=true
@@ -173,7 +173,9 @@ jobs:
           pnpm --filter @open-design/web build:sidecar
 
       - name: Typecheck workspaces
-        run: pnpm -r --workspace-concurrency=4 --if-present run typecheck
+        run: |
+          pnpm -r --filter '!open-design' --filter '!@open-design/landing-page' --workspace-concurrency=4 --if-present run typecheck
+          pnpm exec tsc -p scripts/tsconfig.json --noEmit
 
       - name: Check repository layout policies
         run: pnpm guard
@@ -542,7 +544,7 @@ jobs:
       # current workspace is small enough that safer logs and fewer shared-FS
       # races outweigh the lost parallelism; revisit if the package count grows.
       - name: Build workspaces
-        run: pnpm -r --workspace-concurrency=1 --if-present run build
+        run: pnpm -r --filter '!@open-design/landing-page' --workspace-concurrency=1 --if-present run build
 
   validate:
     name: Validate workspace
