@@ -392,7 +392,11 @@ export interface HomeChatComposerClickProps {
     | 'chat_input'
     | 'send_button'
     | 'plugin_chip'
-    | 'action_chip';
+    | 'action_chip'
+    // Paperclip icon opening the file picker. Mirrors the chat_panel
+    // composer's `element: 'attachment'` so the same dashboard counts
+    // "user opened the file picker" across both surfaces.
+    | 'attachment';
   // For plugin / action chips, the specific id (e.g. `prototype`, `from_figma`).
   chip_id?: string;
 }
@@ -1133,16 +1137,28 @@ export interface RunFinishedProps extends Omit<RunCreatedProps, 'area'> {
   total_duration_ms: number;
 }
 
-export interface FileUploadResultProps {
-  page_name: 'file_manager';
-  area: 'file_manager';
+// Surface that emitted a file_upload_result. v2 doc allows the event to
+// fire from three entry points: the dedicated Design Files Upload button
+// (`file_manager`), the chat composer paperclip on the project workspace
+// (`chat_panel`), and the home composer paperclip (`home`). Earlier
+// versions of this contract hard-coded `'file_manager'`, which silently
+// suppressed instrumentation on the other two paths because the call
+// sites couldn't type-check against the right `page_name` literal. The
+// `area` value moves in lockstep with `page_name` per CSV: `file_manager`
+// for the file panel, `chat_composer` for either composer.
+export type TrackingFileUploadSurface =
+  | { page_name: 'file_manager'; area: 'file_manager' }
+  | { page_name: 'chat_panel'; area: 'chat_composer' }
+  | { page_name: 'home'; area: 'chat_composer' };
+
+export type FileUploadResultProps = TrackingFileUploadSurface & {
   project_id: string;
   file_count: number;
   file_type: TrackingFileType;
   file_size_bucket: TrackingFileSizeBucket;
   result: TrackingRunResult;
   error_code?: string;
-}
+};
 
 export interface ArtifactExportResultProps {
   page_name: 'artifact';
