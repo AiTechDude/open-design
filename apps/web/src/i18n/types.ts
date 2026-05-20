@@ -227,6 +227,14 @@ export interface Dict {
   'settings.noAgentsDetected': string;
   'settings.agentAuthRequired': string;
   'settings.agentAuthUnknown': string;
+  'settings.amrLogin': string;
+  'settings.amrLogout': string;
+  'settings.amrLoggingIn': string;
+  'settings.amrLoggingOut': string;
+  'settings.amrLoggedInAs': string;
+  'settings.amrLoggedInWithPlan': string;
+  'settings.amrLoggedInPill': string;
+  'settings.amrNotLoggedIn': string;
   'settings.apiSection': string;
   'settings.quickFillProvider': string;
   'settings.customProvider': string;

@@ -20,6 +20,7 @@ import { LOCALE_LABEL, LOCALES, useI18n } from '../i18n';
 import type { Locale } from '../i18n';
 import type { Dict } from '../i18n/types';
 import { AgentIcon } from './AgentIcon';
+import { AmrAgentCard } from './AmrAgentCard';
 import { ExportDiagnosticsRow } from './ExportDiagnosticsButton';
 import { Icon } from './Icon';
 import {
@@ -1939,25 +1940,35 @@ export function SettingsDialog({
                   <div className="agent-grid">
                     {agents.flatMap((a) => {
                       const active = cfg.agentId === a.id;
-                      const cardEl = a.available ? (
+                      const selectAgent = () => {
+                        trackSettingsClickCliProviderCard(analytics.track, {
+                          page: 'settings',
+                          area: 'execution_model',
+                          element: 'cli_provider_card',
+                          action: 'select_cli_provider',
+                          cli_provider_id: agentIdToTracking(a.id),
+                          install_status: a.available ? 'installed' : 'not_installed',
+                          is_selected: !active,
+                        });
+                        setCfg((c) => ({ ...c, agentId: a.id }));
+                      };
+                      const cardEl = a.id === 'amr' && a.available ? (
+                        <AmrAgentCard
+                          key={a.id}
+                          agentName={a.name}
+                          agentVersion={a.version ?? null}
+                          agentPath={a.path ?? null}
+                          active={active}
+                          onSelect={selectAgent}
+                        />
+                      ) : a.available ? (
                         <button
                           type="button"
                           key={a.id}
                           className={
                             'agent-card' + (active ? ' active' : '')
                           }
-                          onClick={() => {
-                            trackSettingsClickCliProviderCard(analytics.track, {
-                              page: 'settings',
-                              area: 'execution_model',
-                              element: 'cli_provider_card',
-                              action: 'select_cli_provider',
-                              cli_provider_id: agentIdToTracking(a.id),
-                              install_status: a.available ? 'installed' : 'not_installed',
-                              is_selected: !active,
-                            });
-                            setCfg((c) => ({ ...c, agentId: a.id }));
-                          }}
+                          onClick={selectAgent}
                           aria-pressed={active}
                         >
                           <AgentIcon id={a.id} size={32} />
