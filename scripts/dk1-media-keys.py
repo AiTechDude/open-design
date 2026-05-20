@@ -75,6 +75,14 @@ PROVIDERS: list[Provider] = [
         verify=("GET", "https://api.x.ai/v1/models", "bearer"),
     ),
     Provider(
+        key="imagerouter",
+        name="ImageRouter",
+        use="one key routes FLUX 1.1 Pro (image) + Veo 3.1 Lite (video) + routed Grok",
+        signup_url="https://imagerouter.io",
+        key_format="opaque token",
+        verify=("GET", "https://api.imagerouter.io/v1/openai/models", "bearer"),
+    ),
+    Provider(
         key="higgsfield",
         name="Higgsfield (DoP cinematic image-to-video)",
         use="animate a still image with cinematic camera moves",
