@@ -20,9 +20,9 @@ import { readLocalAgentProfileDefs as readLocalAgentProfileDefsFromFile } from '
 import type { RuntimeAgentDef } from './types.js';
 
 const BASE_AGENT_DEFS: RuntimeAgentDef[] = [
+  amrAgentDef,
   claudeAgentDef,
   codexAgentDef,
-  amrAgentDef,
   devinAgentDef,
   geminiAgentDef,
   opencodeAgentDef,
