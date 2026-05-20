@@ -31,6 +31,7 @@ export type MediaProviderId =
   | 'openai'
   | 'volcengine'
   | 'grok'
+  | 'higgsfield'
   | 'hyperframes'
   | 'nanobanana'
   | 'imagerouter'
@@ -103,6 +104,14 @@ export const MEDIA_PROVIDERS: MediaProvider[] = [
     integrated: true,
     defaultBaseUrl: 'https://api.x.ai/v1',
     docsUrl: 'https://docs.x.ai/developers/model-capabilities/video/generation',
+  },
+  {
+    id: 'higgsfield',
+    label: 'Higgsfield',
+    hint: 'DoP cinematic image-to-video',
+    integrated: true,
+    defaultBaseUrl: 'https://platform.higgsfield.ai',
+    docsUrl: 'https://docs.higgsfield.ai',
   },
   {
     id: 'hyperframes',
@@ -495,6 +504,22 @@ export const VIDEO_MODELS: MediaModel[] = [
     hint: 'xAI · 720p t2v + i2v + native audio',
     provider: 'grok',
     caps: ['t2v', 'i2v', 'audio'],
+  },
+
+  // Higgsfield — DoP cinematic image-to-video (camera/motion presets).
+  {
+    id: 'higgsfield-dop-standard',
+    label: 'higgsfield-dop-standard',
+    hint: 'Higgsfield · DoP cinematic i2v',
+    provider: 'higgsfield',
+    caps: ['i2v'],
+  },
+  {
+    id: 'higgsfield-dop-turbo',
+    label: 'higgsfield-dop-turbo',
+    hint: 'Higgsfield · DoP fast i2v',
+    provider: 'higgsfield',
+    caps: ['i2v'],
   },
 
   // ImageRouter — routed video models.

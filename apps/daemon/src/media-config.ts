@@ -85,6 +85,9 @@ const ENV_KEYS: Record<string, string[]> = {
   // upstream env per docs.x.ai quickstart — so users who already export
   // it for the official SDK don't have to re-paste into Settings.
   grok: ['OD_GROK_API_KEY', 'XAI_API_KEY'],
+  // Higgsfield v2 credentials are a single KEY_ID:KEY_SECRET string; the
+  // adapter sends it verbatim in the `Authorization: Key …` header.
+  higgsfield: ['OD_HIGGSFIELD_API_KEY', 'HIGGSFIELD_API_KEY'],
   nanobanana: ['OD_NANOBANANA_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY'],
   imagerouter: ['OD_IMAGEROUTER_API_KEY', 'IMAGEROUTER_API_KEY'],
   'custom-image': ['OD_CUSTOM_IMAGE_API_KEY', 'CUSTOM_IMAGE_API_KEY'],
