@@ -28,6 +28,7 @@ import {
 
 import type { ToolPackConfig } from "./config.js";
 import { copyBundledResourceTrees, linuxResources } from "./resources.js";
+import { electronBuilderVersionForAppVersion, readRuntimeAppVersion } from "./versions.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -357,13 +358,7 @@ async function runProductionInstall(appRoot: string): Promise<void> {
 }
 
 async function readPackagedVersion(config: ToolPackConfig): Promise<string> {
-  if (config.appVersion != null) return config.appVersion;
-  const packageJsonPath = join(config.workspaceRoot, "apps", "packaged", "package.json");
-  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version?: unknown };
-  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
-    throw new Error(`missing apps/packaged package version in ${packageJsonPath}`);
-  }
-  return packageJson.version;
+  return readRuntimeAppVersion(config);
 }
 
 async function buildWorkspaceArtifacts(config: ToolPackConfig): Promise<void> {
@@ -453,9 +448,10 @@ async function writeAssembledApp(
   }
 
   const version = await readPackagedVersion(config);
+  const packageVersion = electronBuilderVersionForAppVersion(version);
   const packageJson = {
     name: "open-design-packaged",
-    version,
+    version: packageVersion,
     private: true,
     main: "main.cjs",
     dependencies,
@@ -492,6 +488,7 @@ async function writeLinuxBuilderConfig(config: ToolPackConfig, paths: LinuxPaths
   const target = config.to === "dir" ? ["dir"] : ["AppImage"];
   const namespaceToken = sanitizeNamespace(config.namespace);
   const packagedVersion = await readPackagedVersion(config);
+  const packageVersion = electronBuilderVersionForAppVersion(packagedVersion);
 
   const builderConfig: Record<string, unknown> = {
     appId: "io.open-design.desktop",
@@ -511,7 +508,7 @@ async function writeLinuxBuilderConfig(config: ToolPackConfig, paths: LinuxPaths
       main: "./main.cjs",
       name: "open-design-packaged-app",
       productName: PRODUCT_NAME,
-      version: packagedVersion,
+      version: packageVersion,
       ...(config.portable ? {} : { odToolsPackRuntimeRoot: config.roots.runtime.namespaceBaseRoot }),
     },
     extraResources: [

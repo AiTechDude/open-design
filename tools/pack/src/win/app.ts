@@ -9,6 +9,7 @@ import { createCommandInvocation, createPackageManagerInvocation } from "@open-d
 import { hashJson, hashPath, ToolPackCache } from "../cache.js";
 import type { ToolPackConfig } from "../config.js";
 import { hashPackageSourcePath } from "../package-source-hash.js";
+import { electronBuilderVersionForAppVersion } from "../versions.js";
 import {
   WIN_DAEMON_PREBUNDLE_ESM_REQUIRE_BANNER,
   WIN_PREBUNDLE_ESBUILD_TARGET,
@@ -235,6 +236,7 @@ async function writeAssembledAppEntrypoints(
   packagedVersion: string,
   options: { dependencies?: Record<string, string>; usePrebundle?: boolean } = {},
 ): Promise<void> {
+  const packageVersion = electronBuilderVersionForAppVersion(packagedVersion);
   await mkdir(paths.assembledAppRoot, { recursive: true });
   await cp(
     join(config.workspaceRoot, "apps", "desktop", "dist", "main", "preload.cjs"),
@@ -250,7 +252,7 @@ async function writeAssembledAppEntrypoints(
         name: "open-design-packaged-app",
         private: true,
         productName: PRODUCT_NAME,
-        version: packagedVersion,
+        version: packageVersion,
       },
       null,
       2,

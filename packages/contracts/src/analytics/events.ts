@@ -1025,7 +1025,7 @@ export type TrackingUpdateApplyElapsedBucket =
 
 export interface UpdateApplyObservedProps {
   flow_id: string;
-  channel: 'stable' | 'beta';
+  channel: 'stable' | 'beta' | 'nightly' | 'preview';
   namespace: string;
   platform: string;
   arch: string;

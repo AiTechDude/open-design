@@ -16,6 +16,7 @@ import {
   shouldUseMacStandalonePrebundle,
 } from "../mac-prebundle.js";
 import { copyBundledResourceTrees } from "../resources.js";
+import { electronBuilderVersionForAppVersion } from "../versions.js";
 import { runEsbuild, runNpmInstall, runPnpm } from "./commands.js";
 import { INTERNAL_PACKAGES } from "./constants.js";
 import { resolveMacInstallIdentity } from "./identity.js";
@@ -177,6 +178,7 @@ export async function writeAssembledApp(
   packedTarballs: PackedTarballInfo[],
 ): Promise<void> {
   const packagedVersion = await readPackagedVersion(config);
+  const packageVersion = electronBuilderVersionForAppVersion(packagedVersion);
   const identity = resolveMacInstallIdentity(config);
   await rm(join(config.roots.output.namespaceRoot, "assembled"), { force: true, recursive: true });
   await mkdir(paths.assembledAppRoot, { recursive: true });
@@ -215,7 +217,7 @@ export async function writeAssembledApp(
         name: "open-design-packaged-app",
         private: true,
         productName: identity.productName,
-        version: packagedVersion,
+        version: packageVersion,
       },
       null,
       2,

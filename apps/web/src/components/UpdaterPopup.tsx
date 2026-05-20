@@ -32,6 +32,21 @@ function navLabel(t: Translator, model: UpdaterModel): string {
   return t('updater.available');
 }
 
+function channelLabelFor(channel: string | null | undefined): string | null {
+  switch (channel) {
+    case 'beta':
+      return 'Beta channel';
+    case 'nightly':
+      return 'Nightly channel';
+    case 'preview':
+      return 'Preview channel';
+    case 'stable':
+      return 'Stable channel';
+    default:
+      return null;
+  }
+}
+
 export function UpdaterPopup() {
   const t = useT();
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -180,11 +195,7 @@ export function UpdaterPopup() {
     : model.hasDownloadedInstaller
     ? ' is-ready'
     : ' is-available';
-  const channelLabel = model.status?.channel === 'beta'
-    ? 'Beta channel'
-    : model.status?.channel === 'stable'
-    ? 'Stable channel'
-    : null;
+  const channelLabel = channelLabelFor(model.status?.channel);
 
   return (
     <div className="entry-updater-menu" ref={wrapRef}>

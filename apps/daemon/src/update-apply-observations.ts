@@ -17,7 +17,7 @@ const INSTALLER_OBSERVATION_KIND = 'installer_apply_observation';
 const INSTALLER_OBSERVATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 type InstallerObservationArtifactType = 'dmg' | 'installer';
-type InstallerObservationChannel = 'stable' | 'beta';
+type InstallerObservationChannel = 'stable' | 'beta' | 'nightly' | 'preview';
 type InstallerObservationDeliveryStatus =
   | 'submitted'
   | 'skipped_analytics_disabled'
@@ -96,7 +96,7 @@ function isInstallerObservationSummary(value: unknown): value is InstallerObserv
     typeof value.flowId === 'string' &&
     isSafeFlowId(value.flowId) &&
     typeof value.namespace === 'string' &&
-    (channel === 'stable' || channel === 'beta') &&
+    (channel === 'stable' || channel === 'beta' || channel === 'nightly' || channel === 'preview') &&
     typeof value.platform === 'string' &&
     typeof value.arch === 'string' &&
     (artifactType === 'dmg' || artifactType === 'installer') &&
@@ -134,11 +134,15 @@ async function writeSummary(filePath: string, summary: InstallerObservationSumma
 }
 
 export function normalizeUpdateObservationChannel(version: string, explicit?: string | null): InstallerObservationChannel {
-  if (explicit === 'stable' || explicit === 'beta') return explicit;
+  if (explicit === 'stable' || explicit === 'beta' || explicit === 'nightly' || explicit === 'preview') return explicit;
   if (explicit != null && explicit.startsWith('beta')) return 'beta';
+  if (explicit != null && explicit.startsWith('preview')) return 'preview';
+  if (explicit != null && explicit.startsWith('nightly')) return 'nightly';
   const cleaned = version.trim().replace(/^v/i, '');
   const prerelease = cleaned.split('-', 2)[1] ?? '';
   if (/(?:^|[-.])beta(?:[-.]|$)/i.test(version)) return 'beta';
+  if (/(?:^|[-.])preview(?:[-.]|$)/i.test(version)) return 'preview';
+  if (/(?:^|[-.])nightly(?:[-.]|$)/i.test(version)) return 'nightly';
   if (prerelease.length > 0 && /\.[0-9]+$/.test(prerelease)) return 'beta';
   return 'stable';
 }

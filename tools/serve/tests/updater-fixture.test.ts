@@ -68,4 +68,43 @@ describe("updater fixture server", () => {
       await server.close();
     }
   });
+
+  it("serves nightly and preview channel-specific release versions", async () => {
+    const nightly = await startUpdaterFixtureServer({
+      channel: "nightly",
+      version: "2.0.0.nightly.3",
+    });
+    const preview = await startUpdaterFixtureServer({
+      channel: "preview",
+      version: "2.0.0-preview.4",
+    });
+    try {
+      const nightlyMetadata = await (await fetch(nightly.info.metadataUrl)).json() as {
+        channel?: string;
+        nightlyNumber?: number;
+        nightlyVersion?: string;
+        releaseVersion?: string;
+        stableVersion?: string;
+      };
+      expect(nightlyMetadata.channel).toBe("nightly");
+      expect(nightlyMetadata.nightlyNumber).toBe(3);
+      expect(nightlyMetadata.nightlyVersion).toBe("2.0.0.nightly.3");
+      expect(nightlyMetadata.releaseVersion).toBe("2.0.0.nightly.3");
+      expect(nightlyMetadata.stableVersion).toBe("2.0.0");
+
+      const previewMetadata = await (await fetch(preview.info.metadataUrl)).json() as {
+        channel?: string;
+        previewNumber?: number;
+        previewVersion?: string;
+        releaseVersion?: string;
+      };
+      expect(previewMetadata.channel).toBe("preview");
+      expect(previewMetadata.previewNumber).toBe(4);
+      expect(previewMetadata.previewVersion).toBe("2.0.0-preview.4");
+      expect(previewMetadata.releaseVersion).toBe("2.0.0-preview.4");
+    } finally {
+      await nightly.close();
+      await preview.close();
+    }
+  });
 });

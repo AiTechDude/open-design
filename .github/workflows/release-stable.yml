@@ -213,7 +213,7 @@ jobs:
             --dir "$tools_pack_dir"
             --namespace release-stable
             --portable
-            --app-version "${{ needs.metadata.outputs.stable_version }}"
+            --app-version "${{ needs.metadata.outputs.release_version }}"
             --mac-compression normal
             --to all
             --json
@@ -235,7 +235,11 @@ jobs:
           output="$RUNNER_TEMP/mac-framework-diagnostics.txt"
           source_resolve_log="$RUNNER_TEMP/mac-framework-source-resolve.err"
           source_framework="$(node -e 'const path = require("node:path"); const { createRequire } = require("node:module"); const requireFromDesktop = createRequire(path.join(process.cwd(), "apps/desktop/package.json")); const electron = requireFromDesktop.resolve("electron"); process.stdout.write(path.join(path.dirname(electron), "dist", "Electron.app", "Contents", "Frameworks", "Electron Framework.framework"));' 2>"$source_resolve_log" || true)"
-          built_framework="$RUNNER_TEMP/tools-pack/out/mac/namespaces/release-stable/builder/mac-arm64/Open Design.app/Contents/Frameworks/Electron Framework.framework"
+          app_name="Open Design.app"
+          if [ "${{ needs.metadata.outputs.channel }}" = "nightly" ]; then
+            app_name="Open Design Nightly.app"
+          fi
+          built_framework="$RUNNER_TEMP/tools-pack/out/mac/namespaces/release-stable/builder/mac-arm64/$app_name/Contents/Frameworks/Electron Framework.framework"
 
           dump_framework() {
             local label="$1"
@@ -392,7 +396,7 @@ jobs:
             --dir "$RUNNER_TEMP/tools-pack" \
             --namespace release-stable-intel \
             --portable \
-            --app-version "${{ needs.metadata.outputs.stable_version }}" \
+            --app-version "${{ needs.metadata.outputs.release_version }}" \
             --mac-compression normal \
             --to all \
             --json \
@@ -485,7 +489,7 @@ jobs:
             "--cache-dir", $cacheDir,
             "--namespace", "release-stable-win",
             "--portable",
-            "--app-version", "${{ needs.metadata.outputs.stable_version }}",
+            "--app-version", "${{ needs.metadata.outputs.release_version }}",
             "--to", "nsis",
             "--json"
           )
@@ -503,7 +507,7 @@ jobs:
               --dir $toolsPackDir `
               --namespace release-stable-win `
               --portable `
-              --app-version "${{ needs.metadata.outputs.stable_version }}" `
+              --app-version "${{ needs.metadata.outputs.release_version }}" `
               --to nsis `
               --json
             if ($LASTEXITCODE -ne 0) {
@@ -645,7 +649,7 @@ jobs:
             --dir "$tools_pack_dir"
             --namespace release-stable-linux
             --portable
-            --app-version "${{ needs.metadata.outputs.stable_version }}"
+            --app-version "${{ needs.metadata.outputs.release_version }}"
             --to appimage
             --containerized
             --json

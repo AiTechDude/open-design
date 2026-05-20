@@ -72,6 +72,7 @@ const STABLE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_POLL_INITIAL_DELAY_MS = 5000;
 const DEFAULT_POLL_BACKOFF_INITIAL_MS = 60 * 1000;
 const DEFAULT_POLL_BACKOFF_MAX_MS = 30 * 60 * 1000;
+const DESKTOP_UPDATE_CHANNEL_VALUES = new Set<string>(Object.values(DESKTOP_UPDATE_CHANNELS));
 
 export type DesktopUpdaterConfigInput = {
   appVersion?: string | null;
@@ -209,8 +210,12 @@ function normalizeMode(value: string | undefined, fallback: DesktopUpdateMode): 
 
 function normalizeChannel(value: string | undefined, fallback: DesktopUpdateChannel): DesktopUpdateChannel {
   if (value == null || value.length === 0) return fallback;
-  if (value === DESKTOP_UPDATE_CHANNELS.STABLE || value === DESKTOP_UPDATE_CHANNELS.BETA) return value;
+  if (isDesktopUpdateChannel(value)) return value;
   throw new Error(`unsupported desktop update channel: ${value}`);
+}
+
+function isDesktopUpdateChannel(value: unknown): value is DesktopUpdateChannel {
+  return typeof value === "string" && DESKTOP_UPDATE_CHANNEL_VALUES.has(value);
 }
 
 function defaultMetadataUrl(channel: DesktopUpdateChannel): string {
@@ -244,7 +249,7 @@ function durationEnv(value: string | undefined, fallback: number, name: string):
 }
 
 function defaultPollIntervalMs(channel: DesktopUpdateChannel): number {
-  return channel === DESKTOP_UPDATE_CHANNELS.BETA ? BETA_POLL_INTERVAL_MS : STABLE_POLL_INTERVAL_MS;
+  return channel === DESKTOP_UPDATE_CHANNELS.STABLE ? STABLE_POLL_INTERVAL_MS : BETA_POLL_INTERVAL_MS;
 }
 
 export function resolveDesktopUpdaterConfig(input: DesktopUpdaterConfigInput): DesktopUpdaterConfig {
@@ -482,7 +487,7 @@ function isUpdateReleaseRef(value: unknown): value is UpdateReleaseRef {
     stringField(value, "artifactPath") != null &&
     isChecksumSnapshot(value.checksum) &&
     stringField(value, "checksumPath") != null &&
-    (value.channel === DESKTOP_UPDATE_CHANNELS.STABLE || value.channel === DESKTOP_UPDATE_CHANNELS.BETA) &&
+    isDesktopUpdateChannel(value.channel) &&
     stringField(value, "downloadedAt") != null &&
     stringField(value, "key") != null &&
     isRecord(value.metadata) &&
@@ -495,7 +500,7 @@ function isIncomingRef(value: unknown): value is IncomingRef {
   if (!isRecord(value)) return false;
   return stringField(value, "arch") != null &&
     isArtifactSnapshot(value.artifact) &&
-    (value.channel === DESKTOP_UPDATE_CHANNELS.STABLE || value.channel === DESKTOP_UPDATE_CHANNELS.BETA) &&
+    isDesktopUpdateChannel(value.channel) &&
     stringField(value, "cycleId") != null &&
     isRecord(value.metadata) &&
     stringField(value, "platformKey") != null &&
@@ -642,9 +647,10 @@ function hasCountedPrerelease(version: string): boolean {
 }
 
 function defaultChannelForVersion(version: string): DesktopUpdateChannel {
-  return /(?:^|[-.])beta(?:[-.]|$)/i.test(version) || hasCountedPrerelease(version)
-    ? DESKTOP_UPDATE_CHANNELS.BETA
-    : DESKTOP_UPDATE_CHANNELS.STABLE;
+  if (/(?:^|[-.])beta(?:[-.]|$)/i.test(version)) return DESKTOP_UPDATE_CHANNELS.BETA;
+  if (/(?:^|[-.])preview(?:[-.]|$)/i.test(version)) return DESKTOP_UPDATE_CHANNELS.PREVIEW;
+  if (/(?:^|[-.])nightly(?:[-.]|$)/i.test(version)) return DESKTOP_UPDATE_CHANNELS.NIGHTLY;
+  return hasCountedPrerelease(version) ? DESKTOP_UPDATE_CHANNELS.BETA : DESKTOP_UPDATE_CHANNELS.STABLE;
 }
 
 function compareIdentifier(a: string, b: string): number {
@@ -680,12 +686,13 @@ export function compareVersions(a: string, b: string): number {
 
 function metadataChannel(metadata: Record<string, unknown>): DesktopUpdateChannel | null {
   const channel = stringField(metadata, "channel");
-  if (channel === DESKTOP_UPDATE_CHANNELS.STABLE || channel === DESKTOP_UPDATE_CHANNELS.BETA) return channel;
-  return null;
+  return isDesktopUpdateChannel(channel) ? channel : null;
 }
 
 function releaseVersionForChannel(metadata: Record<string, unknown>, channel: DesktopUpdateChannel): string | null {
   if (channel === DESKTOP_UPDATE_CHANNELS.BETA) return stringField(metadata, "betaVersion");
+  if (channel === DESKTOP_UPDATE_CHANNELS.NIGHTLY) return stringField(metadata, "nightlyVersion") ?? stringField(metadata, "releaseVersion");
+  if (channel === DESKTOP_UPDATE_CHANNELS.PREVIEW) return stringField(metadata, "previewVersion") ?? stringField(metadata, "releaseVersion");
   return stringField(metadata, "releaseVersion") ?? stringField(metadata, "stableVersion");
 }
 

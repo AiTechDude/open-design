@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 
+type UpdaterFixtureChannel = "stable" | "beta" | "nightly" | "preview";
+
 export type UpdaterFixtureOptions = {
   artifactBody?: Buffer | string;
-  channel?: "stable" | "beta";
+  channel?: UpdaterFixtureChannel;
   host?: string;
   platform?: "mac" | "win";
   port?: number;
@@ -12,7 +14,7 @@ export type UpdaterFixtureOptions = {
 
 export type UpdaterFixtureInfo = {
   artifactUrl: string;
-  channel: "stable" | "beta";
+  channel: UpdaterFixtureChannel;
   checksumUrl: string;
   metadataUrl: string;
   origin: string;
@@ -60,7 +62,13 @@ function prereleaseCounterParts(version: string): { baseVersion: string; number:
   return null;
 }
 
-function channelMetadata(channel: "stable" | "beta", version: string): Record<string, unknown> {
+function normalizeChannel(value: string | undefined): UpdaterFixtureChannel {
+  if (value == null || value.length === 0) return "stable";
+  if (value === "stable" || value === "beta" || value === "nightly" || value === "preview") return value;
+  throw new Error(`unsupported updater fixture channel: ${value}`);
+}
+
+function channelMetadata(channel: UpdaterFixtureChannel, version: string): Record<string, unknown> {
   if (channel === "stable") {
     return {
       baseVersion: version,
@@ -69,19 +77,42 @@ function channelMetadata(channel: "stable" | "beta", version: string): Record<st
     };
   }
 
+  if (channel === "beta") {
+    const countedVersion = prereleaseCounterParts(version);
+    if (countedVersion == null) {
+      throw new Error(`beta updater fixture version must match x.y.z-<label>.N; got ${version}`);
+    }
+    return {
+      baseVersion: countedVersion.baseVersion,
+      betaNumber: countedVersion.number,
+      betaVersion: version,
+    };
+  }
+
   const countedVersion = prereleaseCounterParts(version);
   if (countedVersion == null) {
-    throw new Error(`beta updater fixture version must match x.y.z-<label>.N; got ${version}`);
+    throw new Error(`${channel} updater fixture version must match x.y.z-<label>.N; got ${version}`);
   }
+  if (channel === "nightly") {
+    return {
+      baseVersion: countedVersion.baseVersion,
+      nightlyNumber: countedVersion.number,
+      nightlyVersion: version,
+      releaseVersion: version,
+      stableVersion: countedVersion.baseVersion,
+    };
+  }
+
   return {
     baseVersion: countedVersion.baseVersion,
-    betaNumber: countedVersion.number,
-    betaVersion: version,
+    previewNumber: countedVersion.number,
+    previewVersion: version,
+    releaseVersion: version,
   };
 }
 
 export async function startUpdaterFixtureServer(options: UpdaterFixtureOptions = {}): Promise<UpdaterFixtureServer> {
-  const channel = options.channel ?? "stable";
+  const channel = normalizeChannel(options.channel);
   const host = options.host ?? "127.0.0.1";
   const platform = options.platform ?? "mac";
   const port = options.port ?? 0;

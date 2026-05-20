@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   classifyInstallerObservation,
   installerObservationRoot,
+  normalizeUpdateObservationChannel,
   observePendingInstallerApplyAttempts,
   type InstallerObservationSummary,
 } from '../src/update-apply-observations.js';
@@ -73,6 +74,12 @@ describe('update apply observations', () => {
       reason: 'identity_mismatch',
       result: 'unknown',
     });
+  });
+
+  it('normalizes nightly and preview observation channels without collapsing them to beta', () => {
+    expect(normalizeUpdateObservationChannel('0.8.0.nightly.2')).toBe('nightly');
+    expect(normalizeUpdateObservationChannel('0.8.0-preview.2')).toBe('preview');
+    expect(normalizeUpdateObservationChannel('0.8.0', 'nightly')).toBe('nightly');
   });
 
   it('submits one sanitized analytics event and marks delivery metadata', async () => {

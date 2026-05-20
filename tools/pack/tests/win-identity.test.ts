@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import { describe, expect, it } from "vitest";
 
 import { resolveWinInstallIdentity } from "../src/win/identity.js";
@@ -6,6 +8,16 @@ describe("resolveWinInstallIdentity", () => {
   it("keeps the default namespace on the canonical Windows display name", () => {
     expect(resolveWinInstallIdentity({ namespace: "default" })).toMatchObject({
       displayName: "Open Design",
+      shortcutName: "Open Design.lnk",
+      uninstallerName: "Uninstall Open Design.exe",
+    });
+  });
+
+  it("uses the canonical Windows display name for stable release namespaces", () => {
+    expect(resolveWinInstallIdentity({ namespace: "release-stable-win" })).toMatchObject({
+      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Open Design.exe",
+      displayName: "Open Design",
+      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-release-stable-win",
       shortcutName: "Open Design.lnk",
       uninstallerName: "Uninstall Open Design.exe",
     });
@@ -39,5 +51,28 @@ describe("resolveWinInstallIdentity", () => {
       shortcutName: "Open Design Preview.lnk",
       uninstallerName: "Uninstall Open Design Preview.exe",
     });
+  });
+
+  it("uses first-class nightly display identity for nightly release versions and namespaces", () => {
+    expect(resolveWinInstallIdentity({
+      appVersion: "0.8.0.nightly.2",
+      namespace: "release-stable-win",
+    })).toMatchObject({
+      appPathsKey: "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Open Design Nightly.exe",
+      displayName: "Open Design Nightly",
+      registryKey: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Open Design-release-stable-win",
+      shortcutName: "Open Design Nightly.lnk",
+      uninstallerName: "Uninstall Open Design Nightly.exe",
+    });
+    expect(resolveWinInstallIdentity({ namespace: "release-nightly-win" })).toMatchObject({
+      displayName: "Open Design Nightly",
+      shortcutName: "Open Design Nightly.lnk",
+    });
+  });
+
+  it("keeps the registry DisplayName free of the package version", async () => {
+    const source = await readFile(new URL("../src/win/custom-installer.ts", import.meta.url), "utf8");
+    expect(source).toContain('WriteRegStr HKCU "${registryKey}" "DisplayName" "${productName}"');
+    expect(source).not.toContain('"DisplayName" "${productName} \\${APP_VERSION}"');
   });
 });
