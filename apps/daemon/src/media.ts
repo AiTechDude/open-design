@@ -413,6 +413,11 @@ export async function generateMedia(args: {
       bytes = result.bytes;
       providerNote = result.providerNote;
       suggestedExt = result.suggestedExt;
+    } else if (def.provider === 'higgsfield' && surface === 'video') {
+      const result = await renderHiggsfieldVideo(ctx, credentials, args.onProgress);
+      bytes = result.bytes;
+      providerNote = result.providerNote;
+      suggestedExt = result.suggestedExt;
     } else if (def.provider === 'nanobanana' && surface === 'image') {
       const result = await renderNanoBananaImage(ctx, credentials);
       bytes = result.bytes;
@@ -1361,6 +1366,188 @@ function grokAspectFor(aspect?: string): string {
     return aspect;
   }
   return '16:9';
+}
+
+// ---------------------------------------------------------------------------
+// Provider: Higgsfield — DoP cinematic image-to-video (async polling).
+//
+// Higgsfield's flagship video product is "DoP" (Director of Photography):
+// it animates a still image with cinematic camera/motion moves, so every
+// DoP model is image-to-video — the dispatcher must have produced an
+// `imageRef` (the agent passed --image). There is no text-to-video path
+// here; the registry caps reflect that (`i2v` only).
+//
+// v2 API contract (https://docs.higgsfield.ai):
+//   * Base URL  : https://platform.higgsfield.ai
+//   * Auth      : `Authorization: Key KEY_ID:KEY_SECRET` — Higgsfield
+//                 issues a two-part credential; the user pastes the whole
+//                 `KEY_ID:KEY_SECRET` string as the provider apiKey and we
+//                 forward it verbatim after the `Key ` scheme prefix.
+//   * Submit    : POST /{model-path} with { prompt, image_url, duration }
+//                 → V2Response { status, request_id, status_url, video? }
+//   * Poll      : GET {status_url}  (falls back to
+//                 /requests/{request_id}/status) → same V2Response shape
+//   * Status    : queued | in_progress | completed | failed | nsfw
+//   * Output    : video.url on the completed response
+// ---------------------------------------------------------------------------
+
+const HIGGSFIELD_DEFAULT_BASE_URL = 'https://platform.higgsfield.ai';
+
+// Map our catalogue ids onto Higgsfield's model-path endpoints. The POST
+// target is `${baseUrl}/${path}` — see docs/guides/video.md.
+const HIGGSFIELD_MODEL_ENDPOINTS: Record<string, string> = {
+  'higgsfield-dop-standard': 'higgsfield-ai/dop/standard',
+  'higgsfield-dop-turbo': 'higgsfield-ai/dop/turbo',
+};
+
+async function renderHiggsfieldVideo(ctx: MediaContext, credentials: ProviderConfig, onProgress?: ProgressFn): Promise<RenderResult> {
+  if (!credentials.apiKey) {
+    throw new Error(
+      'no Higgsfield API key — configure it in Settings or set '
+      + 'OD_HIGGSFIELD_API_KEY (value is the full KEY_ID:KEY_SECRET string)',
+    );
+  }
+  // DoP is image-to-video only: it needs a still to animate. Fail fast
+  // with an actionable message instead of submitting an empty job.
+  if (!ctx.imageRef || !ctx.imageRef.dataUrl) {
+    throw new Error(
+      `${ctx.model} is image-to-video — pass --image with a source frame `
+      + '(generate one with an image model first), or pick a text-to-video model.',
+    );
+  }
+
+  const baseUrl = (credentials.baseUrl || HIGGSFIELD_DEFAULT_BASE_URL).replace(/\/$/, '');
+  const endpoint = HIGGSFIELD_MODEL_ENDPOINTS[ctx.model];
+  if (!endpoint) {
+    throw new Error(`no Higgsfield endpoint mapping for model "${ctx.model}"`);
+  }
+
+  // DoP clips are short; clamp the dispatcher's VIDEO_LENGTHS_SEC choice
+  // (up to 30) into the range DoP accepts so a 30s pick doesn't 4xx.
+  const requested = ctx.length || 5;
+  const durationSec = Math.min(Math.max(requested, 3), 10);
+  const authHeader = `Key ${credentials.apiKey}`;
+
+  // Higgsfield's `image_url` accepts the base64 data URI the dispatcher
+  // already built via resolveProjectImage — no separate upload step.
+  const body: Record<string, unknown> = {
+    prompt: ctx.prompt || 'Cinematic camera movement.',
+    image_url: ctx.imageRef.dataUrl,
+    duration: durationSec,
+  };
+
+  const submitResp = await fetch(`${baseUrl}/${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'authorization': authHeader,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const submitText = await submitResp.text();
+  if (!submitResp.ok) {
+    throw new Error(`higgsfield video submit ${submitResp.status}: ${truncate(submitText, 240)}`);
+  }
+  let submitData: any;
+  try {
+    submitData = JSON.parse(submitText);
+  } catch {
+    throw new Error(`higgsfield video non-JSON: ${truncate(submitText, 200)}`);
+  }
+
+  // Resolve the poll target: prefer the server-supplied status_url, fall
+  // back to the documented /requests/{id}/status path. status_url may be
+  // absolute or root-relative.
+  const requestId = submitData?.request_id || submitData?.id || null;
+  const statusUrlRaw =
+    typeof submitData?.status_url === 'string' ? submitData.status_url : '';
+  const pollUrl = statusUrlRaw
+    ? (statusUrlRaw.startsWith('http')
+        ? statusUrlRaw
+        : `${baseUrl}/${statusUrlRaw.replace(/^\//, '')}`)
+    : (requestId ? `${baseUrl}/requests/${encodeURIComponent(requestId)}/status` : '');
+
+  let videoUrl: string | null =
+    submitData?.status === 'completed' ? submitData?.video?.url || null : null;
+  let lastStatus: string = submitData?.status || '';
+
+  if (!videoUrl && lastStatus === 'failed') {
+    throw new Error(`higgsfield job failed on submit: ${truncate(submitText, 200)}`);
+  }
+  if (!videoUrl && lastStatus === 'nsfw') {
+    throw new Error('higgsfield rejected the job: output flagged NSFW.');
+  }
+
+  if (!videoUrl) {
+    if (!pollUrl) {
+      throw new Error(
+        `higgsfield video submit returned no video and no request_id/status_url `
+        + `to poll (status=${lastStatus || 'unknown'})`,
+      );
+    }
+    const startedAt = Date.now();
+    const configuredMaxMs = Number(process.env.OD_HIGGSFIELD_VIDEO_MAX_POLL_MS);
+    const maxMs =
+      Number.isFinite(configuredMaxMs) && configuredMaxMs >= 60_000
+        ? configuredMaxMs
+        : 8 * 60 * 1000;
+    if (typeof onProgress === 'function') {
+      onProgress(`higgsfield i2v job ${requestId || ''} accepted; polling status…`);
+    }
+    while (Date.now() - startedAt < maxMs) {
+      await sleep(3000);
+      const pollResp = await fetch(pollUrl, {
+        headers: { 'authorization': authHeader },
+      });
+      const pollText = await pollResp.text();
+      if (!pollResp.ok) {
+        throw new Error(`higgsfield poll ${pollResp.status}: ${truncate(pollText, 240)}`);
+      }
+      let pollData: any;
+      try {
+        pollData = JSON.parse(pollText);
+      } catch {
+        throw new Error(`higgsfield poll non-JSON: ${truncate(pollText, 200)}`);
+      }
+      lastStatus = pollData?.status || '';
+      if (typeof onProgress === 'function') {
+        const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+        onProgress(`higgsfield job status=${lastStatus || 'pending'} (elapsed ${elapsedSec}s)`);
+      }
+      if (lastStatus === 'completed') {
+        videoUrl = pollData?.video?.url || null;
+        break;
+      }
+      if (lastStatus === 'failed') {
+        const reasonRaw = pollData?.error?.message || pollData?.error || lastStatus;
+        const reason = typeof reasonRaw === 'string' ? reasonRaw : JSON.stringify(reasonRaw);
+        throw new Error(`higgsfield job failed: ${reason}`);
+      }
+      if (lastStatus === 'nsfw') {
+        throw new Error('higgsfield job rejected: output flagged NSFW.');
+      }
+    }
+    if (!videoUrl) {
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      const ceilingSec = Math.round(maxMs / 1000);
+      throw new Error(
+        `higgsfield video timed out after ${elapsedSec}s waiting for status=completed `
+        + `(last status: ${lastStatus || 'pending'}, ceiling ${ceilingSec}s). `
+        + `If your jobs legitimately need longer, raise OD_HIGGSFIELD_VIDEO_MAX_POLL_MS.`,
+      );
+    }
+  }
+
+  const dlResp = await fetch(videoUrl);
+  if (!dlResp.ok) throw new Error(`higgsfield video fetch ${dlResp.status}`);
+  const arr = await dlResp.arrayBuffer();
+  const bytes = Buffer.from(arr);
+
+  return {
+    bytes,
+    providerNote: `higgsfield/${ctx.model} · i2v · ${durationSec}s · ${bytes.length} bytes`,
+    suggestedExt: '.mp4',
+  };
 }
 
 // ---------------------------------------------------------------------------
