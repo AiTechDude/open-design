@@ -649,13 +649,11 @@ export function EntryShell({
           </a>
           <a
             className="avatar-item"
-            href="https://discord.gg/BYShPgWpq"
-            target="_blank"
-            rel="noreferrer noopener"
+            href="https://discord.gg/mHAjSMV6gz"
             onClick={() => setAvatarMenuOpen(false)}
           >
             <span className="avatar-item-icon" aria-hidden>
-              <Icon name="external-link" size={14} />
+              <Icon name="discord" size={14} />
             </span>
             <span>Join Discord</span>
           </a>
@@ -841,6 +839,16 @@ export function EntryShell({
           <div className="entry-main__topbar">
             <div className="entry-main__topbar-chips">
               <GithubStarBadge />
+              <a
+                className="entry-discord-badge"
+                href="https://discord.gg/mHAjSMV6gz"
+                aria-label="Join the Open Design Discord"
+                title="Join the Open Design Discord"
+                data-testid="entry-discord-badge"
+              >
+                <Icon name="discord" size={14} className="entry-discord-badge__icon" />
+                <span className="entry-discord-badge__label">Join Discord</span>
+              </a>
               <InlineModelSwitcher
                 config={config}
                 agents={agents}

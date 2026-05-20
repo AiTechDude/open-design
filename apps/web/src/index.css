@@ -16433,7 +16433,6 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
   align-items: center;
   justify-content: center;
   min-height: 26px;
-  margin-top: 8px;
   padding: 4px 10px;
   border: 1px solid var(--accent-soft);
   border-radius: var(--radius-pill);
@@ -16449,6 +16448,27 @@ body.entry-resizing { cursor: col-resize; user-select: none; }
 .assistant-feedback-submit:disabled {
   opacity: 0.45;
   cursor: default;
+}
+.assistant-feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.assistant-feedback-discord-note {
+  margin: 7px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.assistant-feedback-discord-note a {
+  color: #5865f2;
+  font-weight: 650;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.assistant-feedback-discord-note a:hover {
+  color: color-mix(in srgb, #5865f2 78%, var(--text-strong));
 }
 
 .unfinished-todos {
