@@ -10637,11 +10637,6 @@ export async function startServer({
       const ua = String(req.get('user-agent') ?? '');
       run.clientType = ua.includes('Electron/') ? 'desktop' : 'web';
     }
-    try {
-      pinAssistantMessageOnRunCreate(db, run);
-    } catch (err) {
-      console.warn('[runs] message create pin failed', err);
-    }
     if (resolvedSnapshot?.ok) {
       try {
         const { linkSnapshotToRun } = await import('./plugins/snapshots.js');
