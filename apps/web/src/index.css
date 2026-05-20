@@ -25571,9 +25571,6 @@ body.desktop-pet-shell .pet-task-item {
   color: var(--text-muted);
   font-weight: 560;
 }
-.app .msg > .role {
-  display: none;
-}
 .app .msg .role > span:first-child {
   color: var(--text);
   font-weight: 650;
