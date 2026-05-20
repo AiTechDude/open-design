@@ -1,5 +1,7 @@
 type ReleaseChannelIdentity = "stable" | "beta" | "nightly" | "preview";
 
+export { releaseAppVersionArgs } from "./packaged-release-version.js";
+
 export type PackagedWinInstallIdentity = {
   displayName: string;
   namespaceToken: string;
@@ -35,11 +37,6 @@ function displayNameForChannel(channel: ReleaseChannelIdentity): string {
   if (channel === "nightly") return "Open Design Nightly";
   if (channel === "preview") return "Open Design Preview";
   return "Open Design";
-}
-
-export function releaseAppVersionArgs(releaseVersion: string | null | undefined): string[] {
-  const normalized = releaseVersion?.trim();
-  return normalized == null || normalized.length === 0 ? [] : ["--app-version", normalized];
 }
 
 export function resolvePackagedWinInstallIdentity(options: {

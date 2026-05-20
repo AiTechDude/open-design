@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
 import { createPackagedSmokeReport } from '@/vitest/packaged-report';
+import { releaseAppVersionArgs } from '@/vitest/packaged-release-version';
 import { createDesktopHarness, STORAGE_KEY, waitFor } from '../lib/desktop/desktop-test-helpers.ts';
 
 const execFileAsync = promisify(execFile);
@@ -17,6 +18,8 @@ const e2eRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const workspaceRoot = dirname(e2eRoot);
 const toolsPackDir = resolveFromWorkspace(process.env.OD_PACKAGED_E2E_TOOLS_PACK_DIR ?? '.tmp/tools-pack');
 const namespace = process.env.OD_PACKAGED_E2E_NAMESPACE ?? 'release-beta';
+const releaseVersion = process.env.OD_PACKAGED_E2E_RELEASE_VERSION;
+const toolsPackReleaseVersionArgs = releaseAppVersionArgs(releaseVersion);
 const pnpmCommand = process.env.OD_E2E_PNPM_COMMAND ?? 'pnpm';
 const screenshotPath = join(toolsPackDir, 'screenshots', `${namespace}.png`);
 
@@ -1112,6 +1115,7 @@ async function runToolsPackJson<T>(action: string, extraArgs: string[] = []): Pr
     toolsPackDir,
     '--namespace',
     namespace,
+    ...toolsPackReleaseVersionArgs,
     '--json',
     ...extraArgs,
   ];
