@@ -36,6 +36,7 @@ import {
   sanitizeCustomModel,
   spawnEnvForAgent,
 } from './agents.js';
+import { resolveModelForAgent } from './runtimes/models.js';
 import { migrateLegacyDataDirSync } from './legacy-data-migrator.js';
 import {
   consumedImportNonces,
@@ -9297,12 +9298,14 @@ export async function startServer({
     // (live or fallback). Otherwise allow it through if it passes a
     // permissive sanitizer — that's the path for user-typed custom model
     // ids the CLI's listing didn't surface yet.
-    const safeModel =
+    const safeModel = resolveModelForAgent(
+      def,
       typeof model === 'string'
         ? isKnownModel(def, model)
           ? model
           : sanitizeCustomModel(model)
-        : null;
+        : null,
+    );
     const safeReasoning =
       typeof reasoning === 'string' && Array.isArray(def.reasoningOptions)
         ? (def.reasoningOptions.find((r) => r.id === reasoning)?.id ?? null)

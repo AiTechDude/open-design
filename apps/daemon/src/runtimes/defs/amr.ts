@@ -57,4 +57,10 @@ export const amrAgentDef = {
   ],
   buildArgs: () => ['agent', 'run', '--runtime', 'opencode'],
   streamFormat: 'acp-json-rpc',
+  // Daemon-process env override for the default model id (see
+  // resolveModelForAgent in runtimes/models.ts). Lets operators swap the
+  // hardcoded fallback (`gpt-5.4-mini`) without a code change when
+  // opencode's openai-provider registry drops it upstream — just
+  // `export VELA_DEFAULT_MODEL=gpt-5.5` before launching tools-dev / od.
+  defaultModelEnvVar: 'VELA_DEFAULT_MODEL',
 } satisfies RuntimeAgentDef;
