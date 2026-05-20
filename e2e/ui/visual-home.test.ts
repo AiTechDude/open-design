@@ -35,7 +35,7 @@ test('captures the home plugin filtered surface', async ({ page }) => {
 
   await page.getByTestId('plugins-home-pill-category-import').click();
   await expect(page.locator('[data-plugin-id="visual-figma-importer"]')).toBeVisible();
-  await expect(page.getByTestId('plugins-home-clear')).toBeVisible();
+  await expect(page.getByTestId('plugins-home-search-clear')).toBeVisible();
 
   await captureVisual(page, 'visual-home-plugin-filter');
 });
@@ -225,7 +225,7 @@ test('captures the settings BYOK surface', async ({ page }) => {
 });
 
 async function openAvatarMenu(page: Parameters<typeof configureVisualPage>[0]) {
-  await page.locator('.avatar-menu .settings-icon-btn').click();
+  await page.getByRole('button', { name: /open settings/i }).click();
   const menu = page.locator('.avatar-popover[role="menu"]');
   await expect(menu).toBeVisible();
   return menu;

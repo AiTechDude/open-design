@@ -260,7 +260,7 @@ export async function waitForVisualReady(page: Page): Promise<void> {
 
 export async function waitForVisualProjects(page: Page, projects: readonly VisualProject[]): Promise<void> {
   if (projects.length === 0) {
-    await expect(page.getByText('No projects yet — type a prompt to start one.')).toBeVisible();
+    await expect(page.getByTestId('recent-projects-strip')).toHaveCount(0);
     return;
   }
 
